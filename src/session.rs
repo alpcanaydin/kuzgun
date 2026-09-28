@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::shimmer::ShimmerText;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::theme::ActiveTheme as _;
 use gpui_kit::component::{Icon, Sizable as _};
@@ -91,6 +93,7 @@ fn step(e: &Entry) -> (IconName, &'static str, String) {
         "agent" | "task" => (IconName::Bot, "Started a subagent:", target),
         "todowrite" | "update_plan" => (IconName::ListChecks, "Updated the plan", String::new()),
         "skill" => (IconName::Sparkles, "Used the skill", target),
+        "notice" => (IconName::Bell, "", target),
         _ if lower.starts_with("mcp__") => {
             let short = name.rsplit("__").next().unwrap_or(name).replace('_', " ");
             (IconName::Settings2, "Called", format!("{short} {target}").trim().to_string())
@@ -233,7 +236,11 @@ impl KuzgunApp {
                         .gap_1p5()
                         .text_xs()
                         .text_color(muted)
-                        .child(div().size(px(7.)).rounded_full().bg(color))
+                        .child(if live {
+                            Spinner::new().xsmall().color(color).into_any_element()
+                        } else {
+                            div().size(px(7.)).rounded_full().bg(color).into_any_element()
+                        })
                         .child(state),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -324,7 +331,8 @@ impl KuzgunApp {
                     let end = entries.get(to).map(|e| e.at).filter(|&t| t > 0).unwrap_or(entries[to - 1].at);
                     let worked = if start > 0 && end >= start { span(end - start) } else { String::new() };
                     let title = if live {
-                        format!("Working · {steps} step{}", if steps == 1 { "" } else { "s" })
+                        let since = if start > 0 { format!(" for {}", span(now - start)) } else { String::new() };
+                        format!("Working{since} · {steps} step{}", if steps == 1 { "" } else { "s" })
                     } else if worked.is_empty() {
                         format!("{steps} step{}", if steps == 1 { "" } else { "s" })
                     } else {
@@ -345,12 +353,18 @@ impl KuzgunApp {
                             .text_color(muted)
                             .cursor_pointer()
                             .hover(|d| d.bg(muted.opacity(0.06)).text_color(fg))
+                            // A spinner and a shimmer read as "still going"; a
+                            // green dot read as done.
                             .child(if live {
-                                div().size(px(8.)).rounded_full().bg(theme.green).into_any_element()
+                                Spinner::new().xsmall().color(accent).into_any_element()
                             } else {
                                 Icon::new(IconName::ListChecks).size(px(14.)).into_any_element()
                             })
-                            .child(div().flex_1().child(title))
+                            .child(if live {
+                                div().flex_1().text_color(fg).child(ShimmerText::new(title).id(("work-live", from))).into_any_element()
+                            } else {
+                                div().flex_1().child(title).into_any_element()
+                            })
                             .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size(px(14.)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(s) = &mut this.session
@@ -401,6 +415,8 @@ impl KuzgunApp {
                                     .into_any_element()
                             } else {
                                 let (icon, verb, target) = step(e);
+                                // The call that has no result yet is the one running now.
+                                let busy = live && e.output.is_none() && j + 1 == to;
                                 div()
                                     .flex()
                                     .flex_col()
@@ -415,7 +431,11 @@ impl KuzgunApp {
                                             .cursor_pointer()
                                             .text_sm()
                                             .hover(|d| d.bg(muted.opacity(0.06)))
-                                            .child(Icon::new(icon).size(px(13.)).text_color(muted))
+                                            .child(if busy {
+                                                Spinner::new().xsmall().color(accent).into_any_element()
+                                            } else {
+                                                Icon::new(icon).size(px(13.)).text_color(muted).into_any_element()
+                                            })
                                             .child(div().flex_none().text_color(fg).child(verb))
                                             .child(div().flex_1().min_w_0().truncate().text_color(muted).child(target))
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -461,8 +481,8 @@ impl KuzgunApp {
                     .gap_2()
                     .text_sm()
                     .text_color(muted)
-                    .child(div().size(px(7.)).rounded_full().bg(theme.green))
-                    .child("Working…")
+                    .child(Spinner::new().xsmall().color(accent))
+                    .child(ShimmerText::new("Working…").id("work-tail"))
                     .into_any_element(),
             );
         } else if let Some(r) = run.as_ref().filter(|r| r.state != RunState::Running) {
@@ -479,6 +499,60 @@ impl KuzgunApp {
                     .into_any_element(),
             );
         }
+
+        // ---- live status bar, as in the Claude Code terminal ----
+        let footer = running.then(|| {
+            let (turn_start, tokens) = run
+                .as_ref()
+                .and_then(|r| self.conversations.get(&r.transcript))
+                .map(|c| (c.transcript.turn_start, c.transcript.turn_tokens))
+                .unwrap_or((0, 0));
+            let (verb, doing) = match entries.last() {
+                Some(e) if e.kind == Kind::Thinking => ("Thinking", "thinking".to_string()),
+                Some(e) if e.kind == Kind::Tool && e.output.is_none() => {
+                    let (_, v, _) = step(e);
+                    let verb = match v {
+                        "Read" => "Reading",
+                        "Edited" => "Editing",
+                        "Ran" => "Running",
+                        "Searched" | "Searched the web for" => "Searching",
+                        "Started a subagent:" => "Waiting on a subagent",
+                        _ => "Working",
+                    };
+                    (verb, e.tool.clone().unwrap_or_default().to_lowercase())
+                }
+                Some(e) if e.kind == Kind::Assistant => ("Writing", "replying".to_string()),
+                _ => ("Working", "working".to_string()),
+            };
+            let mut facts = Vec::new();
+            if turn_start > 0 {
+                facts.push(span(now - turn_start));
+            }
+            if tokens > 0 {
+                facts.push(if tokens >= 1000 { format!("↓ {:.1}k tokens", tokens as f64 / 1000.) } else { format!("↓ {tokens} tokens") });
+            }
+            facts.push(doing);
+            div()
+                .flex()
+                .flex_none()
+                .justify_center()
+                .px_8()
+                .py_2p5()
+                .border_t_1()
+                .border_color(border)
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(780.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .child(Spinner::new().xsmall().color(accent))
+                        .child(div().text_color(accent).child(ShimmerText::new(format!("{verb}…")).id("session-status")))
+                        .child(div().text_color(muted).child(format!("({})", facts.join(" · ")))),
+                )
+        });
 
         // ---- right rail: facts and actions ----
         let rail = run.as_ref().map(|r| {
@@ -607,10 +681,11 @@ impl KuzgunApp {
                     .min_h_0()
                     .flex()
                     .child(
+                        div().flex_1().min_w_0().flex().flex_col().child(
                         div()
                             .id("session-scroll")
                             .flex_1()
-                            .min_w_0()
+                            .min_h_0()
                             .overflow_y_scroll()
                             .track_scroll(&scroll)
                             // Scrolling up by hand stops following.
@@ -635,6 +710,8 @@ impl KuzgunApp {
                                         .children(story),
                                 ),
                             ),
+                        )
+                        .children(footer),
                     )
                     .children(rail),
             )

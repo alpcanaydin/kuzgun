@@ -56,6 +56,11 @@ pub struct Entry {
 pub struct Transcript {
     offset: u64,
     pub entries: Vec<Entry>,
+    /// Unix time of the last prompt: the current turn started then.
+    pub turn_start: i64,
+    /// Output tokens the agent wrote since the last prompt.
+    pub turn_tokens: u64,
+    last_message: Option<String>,
 }
 
 const MAX_TEXT: usize = 12_000;
@@ -134,19 +139,11 @@ impl Transcript {
         let content = &v["message"]["content"];
         match v["type"].as_str() {
             Some("user") => match content {
-                Value::String(s) => {
-                    if let Some(t) = clean_prompt(s) {
-                        self.push(Kind::User, t, at);
-                    }
-                }
+                Value::String(s) => self.claude_prompt(s, at),
                 Value::Array(parts) => {
                     for p in parts {
                         match p["type"].as_str() {
-                            Some("text") => {
-                                if let Some(t) = p["text"].as_str().and_then(clean_prompt) {
-                                    self.push(Kind::User, t, at);
-                                }
-                            }
+                            Some("text") => self.claude_prompt(p["text"].as_str().unwrap_or_default(), at),
                             Some("tool_result") => {
                                 if let Some(id) = p["tool_use_id"].as_str() {
                                     self.attach_output(id, flatten(&p["content"]));
@@ -159,6 +156,12 @@ impl Transcript {
                 _ => {}
             },
             Some("assistant") => {
+                // One message streams as several lines that share its id.
+                let id = v["message"]["id"].as_str().map(str::to_string);
+                if id.is_some() && id != self.last_message {
+                    self.turn_tokens += v["message"]["usage"]["output_tokens"].as_u64().unwrap_or(0);
+                    self.last_message = id;
+                }
                 for p in content.as_array().into_iter().flatten() {
                     match p["type"].as_str() {
                         Some("text") => self.push(Kind::Assistant, p["text"].as_str().unwrap_or_default().to_string(), at),
@@ -175,11 +178,42 @@ impl Transcript {
         }
     }
 
+    /// A user line of Claude Code: a prompt, or a note the harness adds in
+    /// the person's name (a background task finished, a subagent reported).
+    fn claude_prompt(&mut self, text: &str, at: i64) {
+        let text = text.trim();
+        if text.contains("<task-notification>") {
+            let summary = tag(text, "summary").or_else(|| tag(text, "status")).unwrap_or_else(|| "finished".into());
+            self.push_tool("notice", format!("Background task: {summary}"), None, at);
+            if let Some(e) = self.entries.last_mut() {
+                e.output = Some(cut(&strip_tags(text), MAX_OUTPUT));
+            }
+            return;
+        }
+        if text.starts_with("Another Claude session sent a message") {
+            self.push_tool("notice", "A subagent reported back".into(), None, at);
+            if let Some(e) = self.entries.last_mut() {
+                e.output = Some(cut(&strip_tags(text), MAX_OUTPUT));
+            }
+            return;
+        }
+        if let Some(t) = clean_prompt(text) {
+            self.turn_start = at;
+            self.turn_tokens = 0;
+            self.last_message = None;
+            self.push(Kind::User, t, at);
+        }
+    }
+
     fn codex_line(&mut self, v: &Value) {
+        let at = time_of(v);
+        if v["type"].as_str() == Some("event_msg") && v["payload"]["type"].as_str() == Some("token_count") {
+            self.turn_tokens += v["payload"]["info"]["last_token_usage"]["output_tokens"].as_u64().unwrap_or(0);
+            return;
+        }
         if v["type"].as_str() != Some("response_item") {
             return;
         }
-        let at = time_of(v);
         let p = &v["payload"];
         match p["type"].as_str() {
             Some("message") => {
@@ -193,7 +227,11 @@ impl Transcript {
                 match p["role"].as_str() {
                     // Context the app injects (environment, instructions,
                     // plugins) comes as tagged user messages.
-                    Some("user") if !text.trim_start().starts_with('<') => self.push(Kind::User, text, at),
+                    Some("user") if !text.trim_start().starts_with('<') => {
+                        self.turn_start = at;
+                        self.turn_tokens = 0;
+                        self.push(Kind::User, text, at);
+                    }
                     Some("assistant") => self.push(Kind::Assistant, text, at),
                     _ => {}
                 }
@@ -244,6 +282,29 @@ impl Transcript {
             _ => {}
         }
     }
+}
+
+/// The text inside `<name>…</name>`.
+fn tag(s: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}>");
+    let a = s.find(&open)? + open.len();
+    let b = s[a..].find(&format!("</{name}>"))? + a;
+    Some(s[a..b].trim().to_string())
+}
+
+/// Text without its XML-like tags.
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut inside = false;
+    for c in s.chars() {
+        match c {
+            '<' => inside = true,
+            '>' if inside => inside = false,
+            _ if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
 }
 
 fn time_of(v: &Value) -> i64 {
