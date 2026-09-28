@@ -147,7 +147,7 @@ impl KuzgunApp {
                     }
                 });
                 if let Some(p) = pick {
-                    this.select_file(p, false, cx);
+                    this.load_file(p, false, cx);
                 }
                 cx.notify();
             });
@@ -174,10 +174,17 @@ impl KuzgunApp {
     /// Opens a file of the run: its diff or its text, read off the main
     /// thread. `force` reloads the text even when it is on screen.
     pub fn select_file(&mut self, path: String, force: bool, cx: &mut Context<Self>) {
+        if let Some(s) = self.session.as_mut() {
+            s.tab = Tab::Files;
+        }
+        self.load_file(path, force, cx);
+    }
+
+    /// Loads a file for the Files tab without switching to it.
+    fn load_file(&mut self, path: String, force: bool, cx: &mut Context<Self>) {
         let Some(s) = self.session.as_mut() else {
             return;
         };
-        s.tab = Tab::Files;
         let mode = s.files.mode;
         let same = s.files.selected.as_ref() == Some(&path) && s.files.text.as_ref().is_some_and(|(p, m, _)| p == &path && *m == mode);
         s.files.selected = Some(path.clone());
@@ -235,7 +242,7 @@ impl KuzgunApp {
         if running && stale {
             self.load_files(cx);
             if let Some(p) = self.session.as_ref().and_then(|s| s.files.selected.clone()) {
-                self.select_file(p, true, cx);
+                self.load_file(p, true, cx);
             }
         }
     }

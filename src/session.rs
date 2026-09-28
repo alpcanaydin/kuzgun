@@ -135,30 +135,13 @@ pub fn resume_command(run: &AgentRun) -> Option<String> {
 impl KuzgunApp {
     /// A path an agent wrote, relative to its worktree or the repo.
     fn session_rel(&self, path: &str) -> String {
-        let p = std::path::Path::new(path);
-        let roots: Vec<PathBuf> = [
-            self.session.as_ref().and_then(|s| match s.files.snap.as_ref().map(|x| &x.source) {
-                Some(crate::files::Source::Tree { dir, .. }) => Some(dir.clone()),
-                _ => None,
-            }),
-            self.root.as_deref().and_then(crate::agents::repo_root),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        for r in roots {
-            if let Ok(rel) = p.strip_prefix(&r) {
-                return rel.display().to_string();
-            }
-        }
-        // A worktree path: `…/.claude/worktrees/<id>/<rel>`.
-        if let Some(i) = path.find("/.claude/worktrees/") {
-            let rest = &path[i + "/.claude/worktrees/".len()..];
-            if let Some((_, rel)) = rest.split_once('/') {
-                return rel.to_string();
-            }
-        }
-        path.to_string()
+        let tree = self.session.as_ref().and_then(|s| match s.files.snap.as_ref().map(|x| &x.source) {
+            Some(crate::files::Source::Tree { dir, .. }) => Some(dir.clone()),
+            _ => None,
+        });
+        let repo = self.root.as_deref().and_then(crate::agents::repo_root);
+        let roots: Vec<&std::path::Path> = [tree.as_deref(), repo.as_deref()].into_iter().flatten().collect();
+        crate::files::relative(path, &roots)
     }
 
     /// Opens the session page of a ticket, on its running (else latest) run.

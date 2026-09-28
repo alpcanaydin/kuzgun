@@ -145,7 +145,7 @@ fn parent(repo: &Path, sha: &str) -> String {
 }
 
 /// A path the agent wrote, relative to the folder the tree is read from.
-fn relative(path: &str, roots: &[&Path]) -> String {
+pub fn relative(path: &str, roots: &[&Path]) -> String {
     // A worktree, even one that is gone: `…/.claude/worktrees/<id>/<rel>`.
     if let Some(i) = path.find("/.claude/worktrees/") {
         let rest = &path[i + "/.claude/worktrees/".len()..];
