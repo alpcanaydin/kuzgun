@@ -16,6 +16,22 @@ const CANCELED: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1
 
 pub const LOGO: &[u8] = include_bytes!("../assets/icon/kuzgun-256.png");
 
+static CLAUDE_CODE: std::sync::LazyLock<std::sync::Arc<Image>> = std::sync::LazyLock::new(|| {
+    std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../assets/icon/harness/claudecode-color.svg").to_vec()))
+});
+static CODEX: std::sync::LazyLock<std::sync::Arc<Image>> = std::sync::LazyLock::new(|| {
+    std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../assets/icon/harness/codex-color.svg").to_vec()))
+});
+
+/// The logo of the agent harness that ran a session, in its own colors.
+pub fn harness_logo(p: crate::transcript::Provider, size: f32) -> Img {
+    let image = match p {
+        crate::transcript::Provider::Claude => CLAUDE_CODE.clone(),
+        crate::transcript::Provider::Codex => CODEX.clone(),
+    };
+    img(image).size(px(size)).flex_none()
+}
+
 pub fn status_icon(c: Category) -> Icon {
     let svg = match c {
         Category::Backlog => BACKLOG,

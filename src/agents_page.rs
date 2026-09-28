@@ -93,6 +93,7 @@ impl KuzgunApp {
                             .child(div().size(px(8.)).rounded_full().bg(color))
                             .child(div().text_sm().text_color(fg).child(state_label)),
                     )
+                    .child(crate::icons::harness_logo(r.provider, 18.))
                     .child(div().w(px(64.)).flex_none().text_xs().font_family(crate::settings::mono_font()).text_color(muted).child(key))
                     .child(
                         div()
@@ -101,7 +102,7 @@ impl KuzgunApp {
                             .flex()
                             .flex_col()
                             .child(div().truncate().text_sm().text_color(fg).child(title))
-                            .child(div().truncate().text_xs().text_color(muted).child(format!("{} · {}", r.provider.label(), r.description))),
+                            .child(div().truncate().text_xs().text_color(muted).child(r.description.clone())),
                     )
                     .when_some(status, |d, (cat, label)| {
                         d.child(

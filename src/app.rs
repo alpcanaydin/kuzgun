@@ -1266,6 +1266,8 @@ impl KuzgunApp {
     }
 
     fn show(&mut self, path: PathBuf, is_doc: bool, full: bool, cx: &mut Context<Self>) {
+        // Opening a ticket or a doc leaves the session page.
+        self.session = None;
         if !is_doc {
             self.selected = Some(path.clone());
         }
@@ -1780,6 +1782,7 @@ impl KuzgunApp {
                         this.view.project = None;
                         this.view.page = crate::store::Page::Board;
                         this.detail = None;
+                        this.session = None;
                         this.save_view();
                         cx.notify();
                     })
@@ -1792,6 +1795,7 @@ impl KuzgunApp {
                         with_app(cx, |this, cx| {
                             this.view.project = Some(name);
                             this.detail = None;
+                            this.session = None;
                             this.save_view();
                             cx.notify();
                         })
@@ -1812,6 +1816,7 @@ impl KuzgunApp {
                 .on_click(cx.listener(|this, _, w, cx| {
                     this.view.page = crate::store::Page::Agents;
                     this.detail = None;
+                    this.session = None;
                     this.save_view();
                     this.board_focus.focus(w, cx);
                     cx.notify();

@@ -431,6 +431,7 @@ impl KuzgunApp {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.view.project = Some(name.clone());
                 this.view.page = crate::store::Page::Board;
+                this.session = None;
                 this.save_view();
                 cx.notify();
             }))

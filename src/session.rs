@@ -218,7 +218,14 @@ impl KuzgunApp {
                 .when(on, |d| d.bg(muted.opacity(0.1)))
                 .cursor_pointer()
                 .hover(|d| d.bg(muted.opacity(0.08)))
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(r.provider.label()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(crate::icons::harness_logo(r.provider, 16.))
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(r.provider.label())),
+                )
                 .child(
                     div()
                         .flex()
@@ -512,7 +519,17 @@ impl KuzgunApp {
                 .border_color(border)
                 .child(div().pb_1().text_xs().font_weight(FontWeight::MEDIUM).text_color(muted).child("SESSION"))
                 .child(fact("Status", state.into()))
-                .child(fact("Harness", r.provider.label().into()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .h(px(30.))
+                        .gap_2()
+                        .text_sm()
+                        .child(div().w(px(96.)).flex_none().text_color(muted).child("Harness"))
+                        .child(crate::icons::harness_logo(r.provider, 16.))
+                        .child(div().text_color(fg).child(r.provider.label())),
+                )
                 .child(fact("Started", ago_label(now - r.started)))
                 .child(fact("Last activity", ago_label(now - r.last_activity)))
                 .child(fact("Ran for", span(r.last_activity - r.started)))

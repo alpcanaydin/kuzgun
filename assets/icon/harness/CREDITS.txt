@@ -1,0 +1,2 @@
+claudecode-color.svg and codex-color.svg come from LobeHub Icons (@lobehub/icons-static-svg 1.95.1), MIT license, see LICENSE.txt.
+The marks belong to Anthropic and OpenAI.
