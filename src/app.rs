@@ -101,6 +101,23 @@ impl Quick {
 pub struct Conversation {
     pub transcript: crate::transcript::Transcript,
     pub md: Vec<Option<Entity<TextViewState>>>,
+    /// The last lines each running background command wrote, by its id.
+    pub tails: HashMap<String, String>,
+}
+
+/// The last lines of a file, read from its end.
+fn tail(path: &Path, lines: usize) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(8 * 1024)));
+    let mut buf = Vec::new();
+    let _ = f.read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
+    let all: Vec<&str> = text.lines().collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
 }
 
 pub const WAITING: &str = "waiting-on-blockers";
@@ -578,6 +595,13 @@ impl KuzgunApp {
         let runs: Vec<crate::agents::AgentRun> = tickets.into_iter().flat_map(|ix| self.runs_of(ix)).collect();
         for run in runs {
             let c = self.conversations.entry(run.transcript.clone()).or_default();
+            for b in c.transcript.background.iter().filter(|b| !b.done) {
+                let t = tail(&b.output, 30);
+                if c.tails.get(&b.id) != Some(&t) {
+                    c.tails.insert(b.id.clone(), t);
+                    changed = true;
+                }
+            }
             if c.transcript.update(&run.transcript, run.provider) {
                 changed = true;
                 for i in c.md.len()..c.transcript.entries.len() {

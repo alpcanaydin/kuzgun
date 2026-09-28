@@ -49,6 +49,97 @@ pub struct Entry {
     pub call: Option<String>,
     /// Unix seconds.
     pub at: i64,
+    /// File changes this tool call made, when it edits files.
+    pub edits: Vec<Edit>,
+}
+
+/// One file change a tool call made, as a unified diff.
+#[derive(Clone, Debug)]
+pub struct Edit {
+    /// The path as the agent wrote it (often absolute).
+    pub path: String,
+    pub diff: String,
+    pub added: usize,
+    pub removed: usize,
+    /// The call made the file.
+    pub created: bool,
+    /// The call removed the file.
+    pub deleted: bool,
+}
+
+impl Edit {
+    /// A diff between two texts of one file.
+    pub fn between(path: &str, old: &str, new: &str) -> Edit {
+        let diff = similar::TextDiff::from_lines(old, new);
+        let (mut added, mut removed) = (0, 0);
+        for c in diff.iter_all_changes() {
+            match c.tag() {
+                similar::ChangeTag::Insert => added += 1,
+                similar::ChangeTag::Delete => removed += 1,
+                similar::ChangeTag::Equal => {}
+            }
+        }
+        let text = diff.unified_diff().context_radius(3).header(path, path).to_string();
+        Edit { path: path.to_string(), diff: text, added, removed, created: false, deleted: false }
+    }
+}
+
+/// The edits of a Claude Code tool call.
+fn claude_edits(name: &str, input: &Value) -> Vec<Edit> {
+    let path = input["file_path"].as_str().unwrap_or_default();
+    if path.is_empty() {
+        return Vec::new();
+    }
+    match name {
+        "Edit" => vec![Edit::between(path, input["old_string"].as_str().unwrap_or_default(), input["new_string"].as_str().unwrap_or_default())],
+        "MultiEdit" => input["edits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| Edit::between(path, e["old_string"].as_str().unwrap_or_default(), e["new_string"].as_str().unwrap_or_default()))
+            .collect(),
+        "Write" => {
+            let mut e = Edit::between(path, "", input["content"].as_str().unwrap_or_default());
+            e.created = true;
+            vec![e]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The edits of a Codex `apply_patch` text:
+/// `*** Update File: path` sections with `+` and `-` lines.
+fn patch_edits(patch: &str) -> Vec<Edit> {
+    let mut out: Vec<Edit> = Vec::new();
+    for line in patch.lines() {
+        let head = [("*** Add File: ", 'A'), ("*** Update File: ", 'M'), ("*** Delete File: ", 'D')]
+            .iter()
+            .find_map(|(p, k)| line.strip_prefix(p).map(|rest| (rest.trim().to_string(), *k)));
+        if let Some((path, kind)) = head {
+            out.push(Edit {
+                diff: format!("--- {path}\n+++ {path}\n"),
+                path,
+                added: 0,
+                removed: 0,
+                created: kind == 'A',
+                deleted: kind == 'D',
+            });
+            continue;
+        }
+        if line.starts_with("*** ") {
+            continue;
+        }
+        if let Some(e) = out.last_mut() {
+            if line.starts_with('+') {
+                e.added += 1;
+            } else if line.starts_with('-') {
+                e.removed += 1;
+            }
+            e.diff.push_str(line);
+            e.diff.push('\n');
+        }
+    }
+    out
 }
 
 /// A conversation read so far.
@@ -61,6 +152,20 @@ pub struct Transcript {
     /// Output tokens the agent wrote since the last prompt.
     pub turn_tokens: u64,
     last_message: Option<String>,
+    /// Shell commands the agent left running in the background.
+    pub background: Vec<Background>,
+}
+
+/// A shell command the agent started in the background and listens to.
+#[derive(Clone, Debug)]
+pub struct Background {
+    pub id: String,
+    /// What the command does, from its description.
+    pub label: String,
+    /// The file Claude Code writes its output to.
+    pub output: std::path::PathBuf,
+    pub started: i64,
+    pub done: bool,
 }
 
 const MAX_TEXT: usize = 12_000;
@@ -110,7 +215,7 @@ impl Transcript {
     fn push(&mut self, kind: Kind, text: String, at: i64) {
         let text = text.trim();
         if !text.is_empty() {
-            self.entries.push(Entry { kind, text: cut(text, MAX_TEXT), tool: None, output: None, call: None, at });
+            self.entries.push(Entry { kind, text: cut(text, MAX_TEXT), tool: None, output: None, call: None, at, edits: Vec::new() });
         }
     }
 
@@ -122,6 +227,7 @@ impl Transcript {
             output: None,
             call,
             at,
+            edits: Vec::new(),
         });
     }
 
@@ -146,7 +252,9 @@ impl Transcript {
                             Some("text") => self.claude_prompt(p["text"].as_str().unwrap_or_default(), at),
                             Some("tool_result") => {
                                 if let Some(id) = p["tool_use_id"].as_str() {
-                                    self.attach_output(id, flatten(&p["content"]));
+                                    let out = flatten(&p["content"]);
+                                    self.note_background(id, &out, at);
+                                    self.attach_output(id, out);
                                 }
                             }
                             _ => {}
@@ -168,7 +276,16 @@ impl Transcript {
                         Some("thinking") => self.push(Kind::Thinking, p["thinking"].as_str().unwrap_or_default().to_string(), at),
                         Some("tool_use") => {
                             let name = p["name"].as_str().unwrap_or("tool");
+                            if matches!(name, "KillShell" | "KillBash" | "TaskStop") {
+                                let id = p["input"]["shell_id"].as_str().or(p["input"]["task_id"].as_str()).unwrap_or_default();
+                                for b in self.background.iter_mut().filter(|b| b.id == id) {
+                                    b.done = true;
+                                }
+                            }
                             self.push_tool(name, summarize(&p["input"]), p["id"].as_str().map(str::to_string), at);
+                            if let Some(e) = self.entries.last_mut() {
+                                e.edits = claude_edits(name, &p["input"]);
+                            }
                         }
                         _ => {}
                     }
@@ -178,11 +295,37 @@ impl Transcript {
         }
     }
 
+    /// A tool result that says the command went to the background.
+    fn note_background(&mut self, call: &str, out: &str, at: i64) {
+        let Some(c) = BACKGROUND.captures(out) else {
+            return;
+        };
+        let label = self
+            .entries
+            .iter()
+            .rev()
+            .find(|e| e.call.as_deref() == Some(call))
+            .map(|e| e.text.clone())
+            .unwrap_or_else(|| "Background command".into());
+        self.background.push(Background {
+            id: c[1].to_string(),
+            label,
+            output: std::path::PathBuf::from(c[2].trim_end_matches('.')),
+            started: at,
+            done: false,
+        });
+    }
+
     /// A user line of Claude Code: a prompt, or a note the harness adds in
     /// the person's name (a background task finished, a subagent reported).
     fn claude_prompt(&mut self, text: &str, at: i64) {
         let text = text.trim();
         if text.contains("<task-notification>") {
+            if let Some(id) = tag(text, "task-id") {
+                for b in self.background.iter_mut().filter(|b| b.id == id) {
+                    b.done = true;
+                }
+            }
             let summary = tag(text, "summary").or_else(|| tag(text, "status")).unwrap_or_else(|| "finished".into());
             self.push_tool("notice", format!("Background task: {summary}"), None, at);
             if let Some(e) = self.entries.last_mut() {
@@ -198,6 +341,14 @@ impl Transcript {
             return;
         }
         if let Some(t) = clean_prompt(text) {
+            // Harness commands are not prompts to the agent.
+            if t == "/clear" {
+                return;
+            }
+            if t.starts_with("/compact") {
+                self.push_tool("notice", "Compacted the conversation".into(), None, at);
+                return;
+            }
             self.turn_start = at;
             self.turn_tokens = 0;
             self.last_message = None;
@@ -250,11 +401,26 @@ impl Transcript {
                 let args = p["arguments"].as_str().and_then(|a| serde_json::from_str::<Value>(a).ok()).unwrap_or(Value::Null);
                 let name = p["name"].as_str().unwrap_or("tool");
                 self.push_tool(name, summarize(&args), p["call_id"].as_str().map(str::to_string), at);
+                // `shell` can run `apply_patch <patch>`.
+                let cmd: Vec<&str> = args["command"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                if cmd.first() == Some(&"apply_patch")
+                    && let (Some(e), Some(patch)) = (self.entries.last_mut(), cmd.get(1))
+                {
+                    e.edits = patch_edits(patch);
+                }
             }
             Some("custom_tool_call") => {
                 let name = p["name"].as_str().unwrap_or("tool");
                 let input = p["input"].as_str().unwrap_or_default();
                 self.push_tool(name, one_line(input), p["call_id"].as_str().map(str::to_string), at);
+                if name == "apply_patch"
+                    && let Some(e) = self.entries.last_mut()
+                {
+                    e.edits = patch_edits(input);
+                    if let Some(first) = e.edits.first() {
+                        e.text = first.path.clone();
+                    }
+                }
             }
             Some("local_shell_call") => {
                 let cmd = p["action"]["command"]
@@ -283,6 +449,10 @@ impl Transcript {
         }
     }
 }
+
+static BACKGROUND: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"running in background with ID: (\w+)\. Output is being written to: (\S+)").unwrap()
+});
 
 /// The text inside `<name>…</name>`.
 fn tag(s: &str, name: &str) -> Option<String> {
@@ -416,6 +586,11 @@ mod tests {
         assert_eq!(e[0].text, "/implement 115");
         assert_eq!(e[2].text, "Run tests");
         assert_eq!(e[2].output.as_deref(), Some("ok. 16 passed"));
+        let edit = read(
+            Provider::Claude,
+            &[r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/r/a.rs","old_string":"a\nb\n","new_string":"a\nc\n"}}]}}"#],
+        );
+        assert_eq!((edit[0].edits[0].added, edit[0].edits[0].removed), (1, 1));
     }
 
     #[test]
@@ -435,5 +610,9 @@ mod tests {
         assert_eq!(kinds, vec![Kind::User, Kind::Tool, Kind::Assistant]);
         assert_eq!(e[1].text, "cargo test");
         assert_eq!(e[1].output.as_deref(), Some("all green"));
+        let patch = patch_edits("*** Begin Patch\n*** Add File: src/new.rs\n+fn main() {}\n*** Update File: src/a.rs\n@@\n-old\n+new\n+more\n*** End Patch");
+        assert_eq!(patch.len(), 2);
+        assert!(patch[0].created);
+        assert_eq!((patch[1].added, patch[1].removed), (2, 1));
     }
 }

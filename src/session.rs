@@ -34,6 +34,10 @@ pub struct SessionView {
     pub scroll: ScrollHandle,
     /// Entries seen at the last render, to follow new ones.
     pub seen: usize,
+    /// The list of background commands is open.
+    pub bg_open: bool,
+    /// Background commands whose output is open, by id.
+    pub bg_shown: HashSet<String>,
 }
 
 /// A row of the story.
@@ -143,6 +147,8 @@ impl KuzgunApp {
             follow,
             scroll: ScrollHandle::new(),
             seen: 0,
+            bg_open: false,
+            bg_shown: HashSet::new(),
         });
         self.refresh_conversations(cx);
         cx.notify();
@@ -200,7 +206,10 @@ impl KuzgunApp {
 
         let cards = div().flex().flex_wrap().gap_2().children(runs.iter().enumerate().map(|(i, r)| {
             let on = run.as_ref().is_some_and(|x| x.transcript == r.transcript);
+            let waiting = r.state != RunState::Running
+                && self.conversations.get(&r.transcript).is_some_and(|c| c.transcript.background.iter().any(|b| !b.done));
             let (state, color) = match r.state {
+                _ if waiting => ("Waiting on background".to_string(), theme.yellow),
                 RunState::Running => (format!("Working for {}", span(now - r.started)), theme.green),
                 RunState::AwaitingReview => ("Awaiting review".to_string(), theme.yellow),
                 RunState::Finished => (format!("Finished {}", ago_label(now - r.last_activity)), muted),
@@ -500,29 +509,32 @@ impl KuzgunApp {
             );
         }
 
-        // ---- live status bar, as in the Claude Code terminal ----
-        let footer = running.then(|| {
-            let (turn_start, tokens) = run
-                .as_ref()
-                .and_then(|r| self.conversations.get(&r.transcript))
-                .map(|c| (c.transcript.turn_start, c.transcript.turn_tokens))
-                .unwrap_or((0, 0));
-            let (verb, doing) = match entries.last() {
-                Some(e) if e.kind == Kind::Thinking => ("Thinking", "thinking".to_string()),
-                Some(e) if e.kind == Kind::Tool && e.output.is_none() => {
-                    let (_, v, _) = step(e);
-                    let verb = match v {
-                        "Read" => "Reading",
-                        "Edited" => "Editing",
-                        "Ran" => "Running",
-                        "Searched" | "Searched the web for" => "Searching",
-                        "Started a subagent:" => "Waiting on a subagent",
-                        _ => "Working",
-                    };
-                    (verb, e.tool.clone().unwrap_or_default().to_lowercase())
+        // ---- live status: a floating pill, with the background commands ----
+        let conv = run.as_ref().and_then(|r| self.conversations.get(&r.transcript));
+        let background: Vec<crate::transcript::Background> =
+            conv.map(|c| c.transcript.background.iter().filter(|b| !b.done).cloned().collect()).unwrap_or_default();
+        let footer = (running || !background.is_empty()).then(|| {
+            let (turn_start, tokens) = conv.map(|c| (c.transcript.turn_start, c.transcript.turn_tokens)).unwrap_or((0, 0));
+            let (verb, doing) = if !running {
+                ("Waiting", "on background commands".to_string())
+            } else {
+                match entries.last() {
+                    Some(e) if e.kind == Kind::Thinking => ("Thinking", "thinking".to_string()),
+                    Some(e) if e.kind == Kind::Tool && e.output.is_none() => {
+                        let (_, v, _) = step(e);
+                        let verb = match v {
+                            "Read" => "Reading",
+                            "Edited" => "Editing",
+                            "Ran" => "Running",
+                            "Searched" | "Searched the web for" => "Searching",
+                            "Started a subagent:" => "Waiting on a subagent",
+                            _ => "Working",
+                        };
+                        (verb, e.text.clone())
+                    }
+                    Some(e) if e.kind == Kind::Assistant => ("Writing", "replying".to_string()),
+                    _ => ("Working", "working".to_string()),
                 }
-                Some(e) if e.kind == Kind::Assistant => ("Writing", "replying".to_string()),
-                _ => ("Working", "working".to_string()),
             };
             let mut facts = Vec::new();
             if turn_start > 0 {
@@ -532,28 +544,133 @@ impl KuzgunApp {
                 facts.push(if tokens >= 1000 { format!("↓ {:.1}k tokens", tokens as f64 / 1000.) } else { format!("↓ {tokens} tokens") });
             }
             facts.push(doing);
+            let bg_open = s.bg_open;
+            let panel = (bg_open && !background.is_empty()).then(|| {
+                div()
+                    .w(px(620.))
+                    .max_w(relative(1.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(theme.popover)
+                    .shadow_lg()
+                    .children(background.iter().enumerate().map(|(i, b)| {
+                        let shown = s.bg_shown.contains(&b.id);
+                        let id = b.id.clone();
+                        let out = conv.and_then(|c| c.tails.get(&b.id).cloned()).unwrap_or_default();
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .id(("bg", i))
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_2()
+                                    .h(px(30.))
+                                    .rounded(px(6.))
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(muted.opacity(0.08)))
+                                    .text_sm()
+                                    .child(Spinner::new().xsmall().color(accent))
+                                    .child(div().flex_1().min_w_0().truncate().text_color(fg).child(b.label.clone()))
+                                    .child(div().text_xs().text_color(muted).child(if b.started > 0 { span(now - b.started) } else { String::new() }))
+                                    .child(Icon::new(if shown { IconName::ChevronDown } else { IconName::ChevronRight }).size(px(13.)).text_color(muted))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(s) = &mut this.session
+                                            && !s.bg_shown.remove(&id)
+                                        {
+                                            s.bg_shown.insert(id.clone());
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(shown, |d| {
+                                d.child(
+                                    div()
+                                        .id(("bg-out", i))
+                                        .mx_2()
+                                        .mb_1()
+                                        .p_2()
+                                        .max_h(px(220.))
+                                        .overflow_y_scroll()
+                                        .rounded(px(6.))
+                                        .bg(muted.opacity(0.08))
+                                        .text_xs()
+                                        .font_family(crate::settings::mono_font())
+                                        .text_color(fg)
+                                        .child(if out.is_empty() { "No output yet.".to_string() } else { out }),
+                                )
+                            })
+                    }))
+            });
+            let n = background.len();
             div()
-                .flex()
-                .flex_none()
-                .justify_center()
+                .absolute()
+                .bottom(px(16.))
+                .left_0()
+                .right_0()
                 .px_8()
-                .py_2p5()
-                .border_t_1()
-                .border_color(border)
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_2()
+                .children(panel)
                 .child(
                     div()
-                        .w_full()
-                        .max_w(px(780.))
                         .flex()
                         .items_center()
                         .gap_2()
+                        .max_w(relative(1.))
+                        .pl_3()
+                        .pr_2()
+                        .h(px(38.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(border)
+                        .bg(theme.popover)
+                        .shadow_lg()
                         .text_sm()
                         .child(Spinner::new().xsmall().color(accent))
-                        .child(div().text_color(accent).child(ShimmerText::new(format!("{verb}…")).id("session-status")))
-                        .child(div().text_color(muted).child(format!("({})", facts.join(" · ")))),
+                        .child(div().flex_none().text_color(accent).child(ShimmerText::new(format!("{verb}…")).id("session-status")))
+                        .child(div().min_w_0().truncate().text_color(muted).child(format!("({})", facts.join(" · "))))
+                        .when(n > 0, |d| {
+                            d.child(
+                                div()
+                                    .id("bg-toggle")
+                                    .flex()
+                                    .flex_none()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .ml_1()
+                                    .px_2p5()
+                                    .h(px(26.))
+                                    .rounded_full()
+                                    .bg(muted.opacity(0.12))
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(muted.opacity(0.2)))
+                                    .text_xs()
+                                    .text_color(fg)
+                                    .child(Icon::new(IconName::Terminal).size(px(12.)))
+                                    .child(format!("{n} in background"))
+                                    .child(Icon::new(if bg_open { IconName::ChevronDown } else { IconName::ChevronUp }).size(px(12.)))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(s) = &mut this.session {
+                                            s.bg_open = !s.bg_open;
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
                 )
         });
 
+        let entries_bg_open = !background.is_empty();
         // ---- right rail: facts and actions ----
         let rail = run.as_ref().map(|r| {
             let tools: Vec<&Entry> = entries.iter().filter(|e| e.kind == Kind::Tool).collect();
@@ -573,7 +690,9 @@ impl KuzgunApp {
                     .child(div().w(px(96.)).flex_none().text_color(muted).child(label.to_string()))
                     .child(div().flex_1().min_w_0().truncate().text_color(fg).child(value))
             };
+            let waiting = r.state != RunState::Running && entries_bg_open;
             let state = match r.state {
+                _ if waiting => "Waiting on background",
                 RunState::Running => "Working",
                 RunState::AwaitingReview => "Awaiting review",
                 RunState::Finished => "Finished",
@@ -681,7 +800,7 @@ impl KuzgunApp {
                     .min_h_0()
                     .flex()
                     .child(
-                        div().flex_1().min_w_0().flex().flex_col().child(
+                        div().flex_1().min_w_0().relative().flex().flex_col().child(
                         div()
                             .id("session-scroll")
                             .flex_1()
@@ -699,7 +818,7 @@ impl KuzgunApp {
                                 }
                             }))
                             .child(
-                                div().flex().justify_center().px_8().py_6().child(
+                                div().flex().justify_center().px_8().pt_6().pb(px(96.)).child(
                                     div()
                                         .w_full()
                                         .max_w(px(780.))
