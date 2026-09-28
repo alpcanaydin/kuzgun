@@ -1,0 +1,37 @@
+[package]
+name = "kuzgun"
+version = "0.1.0"
+description = "A native macOS kanban board for mattpocock/skills tickets"
+edition = "2024"
+
+[dependencies]
+gpui-kit = "0.6"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+dirs = "6"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+notify = "7"
+regex = "1"
+futures = "0.3"
+notify-rust = "4.18.1"
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNUserNotificationCenter", "UNNotificationRequest", "UNNotificationContent", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "block2"] }
+block2 = "0.6"
+
+# The same local patches Tusk carries: editor-style checkbox / switch,
+# inline Markdown code at the text size, toast layout.
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }
+gpui-base = { path = "vendor/gpui-base" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSError", "NSProcessInfo", "NSString"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

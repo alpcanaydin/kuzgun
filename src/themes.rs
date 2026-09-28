@@ -1,0 +1,1421 @@
+//! Built-in color themes for the settings window's theme picker.
+//!
+//! "Kuzgun Dark" (the user's "Le Blackque orange") is the default and is
+//! applied by `theme::apply_kuzgun_dark` exactly as before. Every other theme is
+//! a [`Pal`] of well-known upstream palette values, turned into a kit
+//! `ThemeConfig` (the kit derives hover / active / button shades from the
+//! Base colors) plus a syntax `highlight` section for the SQL editor.
+
+use serde_json::{Value, json};
+
+/// Default dark theme (the user's theme, special-cased in `theme.rs`).
+pub const DEFAULT_DARK: &str = "Kuzgun Dark";
+/// Default light theme: Kuzgun's blue accent on neutral white.
+pub const DEFAULT_LIGHT: &str = "Kuzgun Light";
+
+/// A theme palette. Hex RGB values.
+pub struct Pal {
+    pub name: &'static str,
+    pub light: bool,
+    /// Page / editor / grid background.
+    pub bg: u32,
+    /// Tab bar, table header, inactive tabs.
+    pub surface: u32,
+    /// Popovers, menus, muted fills.
+    pub elevated: u32,
+    /// Inputs and default buttons.
+    pub input: u32,
+    pub border: u32,
+    /// Row hover.
+    pub hover: u32,
+    /// Selected row / text selection.
+    pub selection: u32,
+    pub fg: u32,
+    pub muted_fg: u32,
+    pub accent: u32,
+    pub accent_fg: u32,
+    pub red: u32,
+    pub green: u32,
+    pub yellow: u32,
+    pub blue: u32,
+    pub magenta: u32,
+    pub cyan: u32,
+    // Syntax
+    pub keyword: u32,
+    pub function: u32,
+    pub string: u32,
+    pub number: u32,
+    pub constant: u32,
+    pub type_: u32,
+    pub operator: u32,
+    pub punct: u32,
+    pub variable: u32,
+    pub property: u32,
+    pub comment: u32,
+}
+
+/// Theme names for one appearance's picker, default first.
+pub fn names(light: bool) -> Vec<&'static str> {
+    let builtin = (!light).then_some(DEFAULT_DARK);
+    builtin
+        .into_iter()
+        .chain(PALETTES.iter().filter(|p| p.light == light).map(|p| p.name))
+        .collect()
+}
+
+pub fn find(name: &str) -> Option<&'static Pal> {
+    PALETTES.iter().find(|p| p.name == name)
+}
+
+fn hex(c: u32) -> String {
+    format!("#{c:06x}")
+}
+
+/// `a` moved `t` (0–1) of the way to `b`, per channel.
+/// The grid rule as the text color at the alpha that gives [`grid_line`]
+/// on the background: identical on plain rows, and still a visible
+/// lighter line over tinted ones (selection, pending changes).
+/// The theme border, or (when it matches the raised surface) one step
+/// toward the text color so popover and sheet edges stay visible.
+pub fn visible_border(p: &Pal) -> u32 {
+    let lum = |c: u32| {
+        let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    };
+    if (lum(p.border) - lum(p.elevated)).abs() >= 8. {
+        return p.border;
+    }
+    mix(p.elevated, p.fg, 0.14)
+}
+
+/// Input edge color: the theme's, lifted toward the text when it would
+/// vanish on the card / popover surfaces inputs sit on.
+pub fn visible_input(p: &Pal) -> u32 {
+    let lum = |c: u32| {
+        let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    };
+    let clear = |c: u32| {
+        [p.surface, p.elevated, p.bg]
+            .iter()
+            .all(|s| (lum(c) - lum(*s)).abs() >= 10.)
+    };
+    if clear(p.input) {
+        return p.input;
+    }
+    (1..=8)
+        .map(|i| mix(p.input, p.fg, 0.06 * i as f32))
+        .find(|c| clear(*c))
+        .unwrap_or(p.input)
+}
+
+pub fn grid_rule_rgba(p: &Pal) -> (u32, f32) {
+    let lum = |c: u32| {
+        let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    };
+    let span = lum(p.fg) - lum(p.bg);
+    if span.abs() < 1. {
+        return (grid_line(p), 1.);
+    }
+    (p.fg, ((lum(grid_line(p)) - lum(p.bg)) / span).clamp(0.04, 0.6))
+}
+
+fn grid_rule(p: &Pal) -> String {
+    let lum = |c: u32| {
+        let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    };
+    let span = lum(p.fg) - lum(p.bg);
+    if span.abs() < 1. {
+        return hex(grid_line(p));
+    }
+    let t = ((lum(grid_line(p)) - lum(p.bg)) / span).clamp(0.04, 0.6);
+    hexa(p.fg, (t * 255.).round() as u8)
+}
+
+/// Row / column rules: the theme border, unless it is too close to the
+/// hover (or stripe) tint to stay visible on a hovered row.
+fn grid_line(p: &Pal) -> u32 {
+    let lum = |c: u32| {
+        let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+        0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+    };
+    let even = mix(p.bg, p.fg, if p.light { 0.035 } else { 0.03 });
+    let clear = |c: u32| (lum(c) - lum(p.hover)).abs() >= 10. && (lum(c) - lum(even)).abs() >= 10.;
+    if clear(p.border) {
+        return p.border;
+    }
+    // Step away from the background until the rule clears both tints.
+    (1..=10)
+        .map(|i| mix(p.bg, p.fg, 0.08 + 0.02 * i as f32))
+        .find(|c| clear(*c))
+        .unwrap_or(p.border)
+}
+
+fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let ch = |c: u32, s: u32| ((c >> s) & 0xFF) as f32;
+    let m = |s: u32| ((ch(a, s) + (ch(b, s) - ch(a, s)) * t).round() as u32) << s;
+    m(16) | m(8) | m(0)
+}
+
+fn hexa(c: u32, alpha: u8) -> String {
+    format!("#{c:06x}{alpha:02x}")
+}
+
+/// Kit `ThemeConfig` JSON (single theme object) for a palette.
+pub fn config_json(p: &Pal) -> Value {
+    let syn = |c: u32| json!({ "color": hex(c) });
+    let colors: serde_json::Map<String, Value> = [
+        ("background", hex(p.bg)),
+        ("foreground", hex(p.fg)),
+        ("border", hex(p.border)),
+        ("input.border", hex(p.input)),
+        ("muted.background", hex(p.elevated)),
+        ("muted.foreground", hex(p.muted_fg)),
+        ("primary.background", hex(p.accent)),
+        ("primary.foreground", hex(p.accent_fg)),
+        ("secondary.background", hex(p.input)),
+        ("secondary.foreground", hex(p.fg)),
+        ("accent.background", hex(p.accent)),
+        ("accent.foreground", hex(p.accent_fg)),
+        ("popover.background", hex(p.elevated)),
+        ("popover.foreground", hex(p.fg)),
+        ("group_box.background", hex(p.surface)),
+        ("title_bar.background", hex(p.bg)),
+        ("title_bar.border", hex(p.border)),
+        ("status_bar.background", hex(p.bg)),
+        ("status_bar.border", hex(p.border)),
+        ("tab_bar.background", hex(p.surface)),
+        ("tab.background", hex(p.surface)),
+        ("tab.active.background", hex(p.bg)),
+        ("tab.foreground", hex(p.muted_fg)),
+        ("tab.active.foreground", hex(p.fg)),
+        ("sidebar.background", hex(p.bg)),
+        ("sidebar.border", hex(p.border)),
+        ("sidebar.foreground", hex(p.fg)),
+        ("sidebar.accent.background", hex(p.selection)),
+        ("sidebar.accent.foreground", hex(p.fg)),
+        ("list.background", hex(p.bg)),
+        ("list.hover.background", hex(p.hover)),
+        ("list.active.background", hexa(p.accent, 0x33)),
+        ("list.active.border", hex(p.accent)),
+        ("table.background", hex(p.bg)),
+        // Stripe: the background nudged toward the text color.
+        ("table.even.background", hex(mix(p.bg, p.fg, if p.light { 0.035 } else { 0.03 }))),
+        ("table.head.background", hex(p.surface)),
+        ("table.head.foreground", hex(p.muted_fg)),
+        ("table.hover.background", hex(p.hover)),
+        ("table.active.background", hex(p.selection)),
+        ("table.active.border", hex(p.accent)),
+        ("table.row.border", grid_rule(p)),
+        ("selection.background", hexa(p.accent, 0x55)),
+        ("caret", hex(p.accent)),
+        ("ring", hex(p.accent)),
+        ("link", hex(p.accent)),
+        ("scrollbar.thumb.background", hexa(p.accent, 0x99)),
+        ("switch.background", hex(p.input)),
+        ("window.border", hex(p.border)),
+        ("base.red", hex(p.red)),
+        ("base.green", hex(p.green)),
+        ("base.yellow", hex(p.yellow)),
+        ("base.blue", hex(p.blue)),
+        ("base.magenta", hex(p.magenta)),
+        ("base.cyan", hex(p.cyan)),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), Value::String(v)))
+    .collect();
+    json!({
+        "name": p.name,
+        "mode": if p.light { "light" } else { "dark" },
+        "colors": colors,
+        "highlight": {
+            "editor.background": hex(p.bg),
+            "editor.foreground": hex(p.fg),
+            "editor.active_line.background": hex(p.hover),
+            "editor.line_number": hex(p.comment),
+            "editor.active_line_number": hex(p.fg),
+            "syntax": {
+                "keyword": syn(p.keyword),
+                "function": syn(p.function),
+                "constructor": syn(p.function),
+                "string": syn(p.string),
+                "string.escape": syn(p.constant),
+                "string.special": syn(p.string),
+                "number": syn(p.number),
+                "boolean": syn(p.constant),
+                "constant": syn(p.constant),
+                "type": syn(p.type_),
+                "operator": syn(p.operator),
+                "punctuation": syn(p.punct),
+                "punctuation.bracket": syn(p.punct),
+                "punctuation.delimiter": syn(p.punct),
+                "variable": syn(p.variable),
+                "variable.special": syn(p.constant),
+                "property": syn(p.property),
+                "attribute": syn(p.property),
+                "comment": syn(p.comment),
+                "comment.doc": syn(p.comment),
+                "tag": syn(p.keyword),
+            }
+        }
+    })
+}
+
+pub static PALETTES: &[Pal] = &[
+    // Kuzgun Light — default light theme: Kuzgun's blue accent, neutral whites,
+    // syntax hues matching Kuzgun Dark (keyword blue, type orange…) darkened
+    // for contrast on white.
+    Pal {
+        name: "Kuzgun Light",
+        light: true,
+        bg: 0xFFFFFF,
+        surface: 0xF5F5F5,
+        elevated: 0xFFFFFF,
+        input: 0xEFEFEF,
+        border: 0xE2E2E2,
+        hover: 0xF3F3F3,
+        selection: 0xDCE8FC,
+        fg: 0x1F1F1F,
+        muted_fg: 0x5E5E5E,
+        accent: 0x2F6FE0,
+        accent_fg: 0xFFFFFF,
+        red: 0xD32F2F,
+        green: 0x2E8B2E,
+        yellow: 0xB8860B,
+        blue: 0x2F6FE0,
+        magenta: 0x9C3FB5,
+        cyan: 0x0B8A8A,
+        keyword: 0x0A64C8,
+        function: 0x0B8080,
+        string: 0x3A8A1C,
+        number: 0xB5502B,
+        constant: 0x3F5BC8,
+        type_: 0xC8600A,
+        operator: 0xC83C3C,
+        punct: 0x1F6FD1,
+        variable: 0x8A6414,
+        property: 0x4A4A4A,
+        comment: 0x8A9696,
+    },
+    // https://github.com/atom/atom/tree/master/packages/one-light-syntax
+    Pal {
+        name: "One Light",
+        light: true,
+        bg: 0xFAFAFA,
+        surface: 0xF0F0F1,
+        elevated: 0xFFFFFF,
+        input: 0xEAEAEB,
+        border: 0xDBDBDC,
+        hover: 0xF0F0F1,
+        selection: 0xE5E5E6,
+        fg: 0x383A42,
+        muted_fg: 0x696C77,
+        accent: 0x4078F2,
+        accent_fg: 0xFFFFFF,
+        red: 0xE45649,
+        green: 0x50A14F,
+        yellow: 0xC18401,
+        blue: 0x4078F2,
+        magenta: 0xA626A4,
+        cyan: 0x0184BC,
+        keyword: 0xA626A4,
+        function: 0x4078F2,
+        string: 0x50A14F,
+        number: 0x986801,
+        constant: 0x986801,
+        type_: 0xC18401,
+        operator: 0x0184BC,
+        punct: 0x383A42,
+        variable: 0xE45649,
+        property: 0xE45649,
+        comment: 0xA0A1A7,
+    },
+    // kanagawa.nvim (lotus)
+    Pal {
+        name: "Kanagawa Lotus",
+        light: true,
+        bg: 0xF2ECBC,
+        surface: 0xE5DDB0,
+        elevated: 0xF2ECBC,
+        input: 0xE7DBA0,
+        border: 0xDCD5AC,
+        hover: 0xE7DBA0,
+        selection: 0xC9CBD1,
+        fg: 0x545464,
+        muted_fg: 0x43436C,
+        accent: 0x4D699B,
+        accent_fg: 0xF2ECBC,
+        red: 0xC84053,
+        green: 0x6F894E,
+        yellow: 0x77713F,
+        blue: 0x4D699B,
+        magenta: 0x624C83,
+        cyan: 0x597B75,
+        keyword: 0x624C83,
+        function: 0x4D699B,
+        string: 0x6F894E,
+        number: 0xB35B79,
+        constant: 0xCC6D00,
+        type_: 0x597B75,
+        operator: 0x836F4A,
+        punct: 0x4E8CA2,
+        variable: 0x545464,
+        property: 0x77713F,
+        comment: 0x8A8980,
+    },
+    // folke/tokyonight.nvim (day)
+    Pal {
+        name: "Tokyo Night Day",
+        light: true,
+        bg: 0xE1E2E7,
+        surface: 0xD0D5E3,
+        elevated: 0xE9E9ED,
+        input: 0xD5D6DB,
+        border: 0xC4C8DA,
+        hover: 0xD5D6DB,
+        selection: 0xB7C1E3,
+        fg: 0x3760BF,
+        muted_fg: 0x6172B0,
+        accent: 0x2E7DE9,
+        accent_fg: 0xFFFFFF,
+        red: 0xF52A65,
+        green: 0x587539,
+        yellow: 0x8C6C3E,
+        blue: 0x2E7DE9,
+        magenta: 0x9854F1,
+        cyan: 0x007197,
+        keyword: 0x9854F1,
+        function: 0x2E7DE9,
+        string: 0x587539,
+        number: 0xB15C00,
+        constant: 0xB15C00,
+        type_: 0x07879D,
+        operator: 0x006A83,
+        punct: 0x006A83,
+        variable: 0x3760BF,
+        property: 0x387068,
+        comment: 0x848CB5,
+    },
+    // morhetz/gruvbox (light, medium)
+    Pal {
+        name: "Gruvbox Light",
+        light: true,
+        bg: 0xFBF1C7,
+        surface: 0xF2E5BC,
+        elevated: 0xFBF1C7,
+        input: 0xEBDBB2,
+        border: 0xD5C4A1,
+        hover: 0xF2E5BC,
+        selection: 0xD5C4A1,
+        fg: 0x3C3836,
+        muted_fg: 0x504945,
+        accent: 0xB57614,
+        accent_fg: 0xFBF1C7,
+        red: 0x9D0006,
+        green: 0x79740E,
+        yellow: 0xB57614,
+        blue: 0x076678,
+        magenta: 0x8F3F71,
+        cyan: 0x427B58,
+        keyword: 0x9D0006,
+        function: 0x79740E,
+        string: 0x79740E,
+        number: 0x8F3F71,
+        constant: 0x8F3F71,
+        type_: 0xB57614,
+        operator: 0xAF3A03,
+        punct: 0x7C6F64,
+        variable: 0x076678,
+        property: 0x427B58,
+        comment: 0x928374,
+    },
+    // rosepinetheme.com (dawn)
+    Pal {
+        name: "Rosé Pine Dawn",
+        light: true,
+        bg: 0xFAF4ED,
+        surface: 0xFFFAF3,
+        elevated: 0xFFFAF3,
+        input: 0xF2E9E1,
+        border: 0xDFDAD9,
+        hover: 0xF4EDE8,
+        selection: 0xDFDAD9,
+        fg: 0x575279,
+        muted_fg: 0x797593,
+        accent: 0x907AA9,
+        accent_fg: 0xFAF4ED,
+        red: 0xB4637A,
+        green: 0x286983,
+        yellow: 0xEA9D34,
+        blue: 0x56949F,
+        magenta: 0x907AA9,
+        cyan: 0xD7827E,
+        keyword: 0x286983,
+        function: 0xD7827E,
+        string: 0xEA9D34,
+        number: 0xEA9D34,
+        constant: 0xD7827E,
+        type_: 0x56949F,
+        operator: 0x797593,
+        punct: 0x797593,
+        variable: 0x575279,
+        property: 0x907AA9,
+        comment: 0x9893A5,
+    },
+    // ethanschoonover.com/solarized (light)
+    Pal {
+        name: "Solarized Light",
+        light: true,
+        bg: 0xFDF6E3,
+        surface: 0xEEE8D5,
+        elevated: 0xFDF6E3,
+        input: 0xEEE8D5,
+        border: 0xE3DCC6,
+        hover: 0xEEE8D5,
+        selection: 0xE3DCC6,
+        fg: 0x586E75,
+        muted_fg: 0x657B83,
+        accent: 0x268BD2,
+        accent_fg: 0xFDF6E3,
+        red: 0xDC322F,
+        green: 0x859900,
+        yellow: 0xB58900,
+        blue: 0x268BD2,
+        magenta: 0xD33682,
+        cyan: 0x2AA198,
+        keyword: 0x859900,
+        function: 0x268BD2,
+        string: 0x2AA198,
+        number: 0xD33682,
+        constant: 0xCB4B16,
+        type_: 0xB58900,
+        operator: 0x859900,
+        punct: 0x657B83,
+        variable: 0x268BD2,
+        property: 0x6C71C4,
+        comment: 0x93A1A1,
+    },
+    // https://github.com/rebelot/kanagawa.nvim (wave)
+    Pal {
+        name: "Kanagawa Wave",
+        light: false,
+        bg: 0x1F1F28,
+        surface: 0x16161D,
+        elevated: 0x2A2A37,
+        input: 0x2A2A37,
+        border: 0x2A2A37,
+        hover: 0x2A2A37,
+        selection: 0x2D4F67,
+        fg: 0xDCD7BA,
+        muted_fg: 0xC8C093,
+        accent: 0x7E9CD8,
+        accent_fg: 0x16161D,
+        red: 0xE82424,
+        green: 0x98BB6C,
+        yellow: 0xE6C384,
+        blue: 0x7E9CD8,
+        magenta: 0x957FB8,
+        cyan: 0x7AA89F,
+        keyword: 0x957FB8,
+        function: 0x7E9CD8,
+        string: 0x98BB6C,
+        number: 0xD27E99,
+        constant: 0xFFA066,
+        type_: 0x7AA89F,
+        operator: 0xC0A36E,
+        punct: 0x9CABCA,
+        variable: 0xDCD7BA,
+        property: 0xE6C384,
+        comment: 0x727169,
+    },
+    // kanagawa.nvim (dragon)
+    Pal {
+        name: "Kanagawa Dragon",
+        light: false,
+        bg: 0x181616,
+        surface: 0x12120F,
+        elevated: 0x282727,
+        input: 0x282727,
+        border: 0x282727,
+        hover: 0x282727,
+        selection: 0x2D4F67,
+        fg: 0xC5C9C5,
+        muted_fg: 0xA6A69C,
+        accent: 0x8BA4B0,
+        accent_fg: 0x12120F,
+        red: 0xC4746E,
+        green: 0x87A987,
+        yellow: 0xC4B28A,
+        blue: 0x8BA4B0,
+        magenta: 0x8992A7,
+        cyan: 0x8EA4A2,
+        keyword: 0x8992A7,
+        function: 0x8BA4B0,
+        string: 0x8A9A7B,
+        number: 0xA292A3,
+        constant: 0xB6927B,
+        type_: 0x8EA4A2,
+        operator: 0xC4746E,
+        punct: 0x9E9B93,
+        variable: 0xC5C9C5,
+        property: 0xC4B28A,
+        comment: 0x737C73,
+    },
+    // https://catppuccin.com/palette (mocha)
+    Pal {
+        name: "Catppuccin Mocha",
+        light: false,
+        bg: 0x1E1E2E,
+        surface: 0x181825,
+        elevated: 0x313244,
+        input: 0x313244,
+        border: 0x313244,
+        hover: 0x2A2B3C,
+        selection: 0x45475A,
+        fg: 0xCDD6F4,
+        muted_fg: 0xBAC2DE,
+        accent: 0xCBA6F7,
+        accent_fg: 0x11111B,
+        red: 0xF38BA8,
+        green: 0xA6E3A1,
+        yellow: 0xF9E2AF,
+        blue: 0x89B4FA,
+        magenta: 0xF5C2E7,
+        cyan: 0x94E2D5,
+        keyword: 0xCBA6F7,
+        function: 0x89B4FA,
+        string: 0xA6E3A1,
+        number: 0xFAB387,
+        constant: 0xFAB387,
+        type_: 0xF9E2AF,
+        operator: 0x89DCEB,
+        punct: 0x9399B2,
+        variable: 0xCDD6F4,
+        property: 0xB4BEFE,
+        comment: 0x6C7086,
+    },
+    // catppuccin (macchiato)
+    Pal {
+        name: "Catppuccin Macchiato",
+        light: false,
+        bg: 0x24273A,
+        surface: 0x1E2030,
+        elevated: 0x363A4F,
+        input: 0x363A4F,
+        border: 0x363A4F,
+        hover: 0x2E3248,
+        selection: 0x494D64,
+        fg: 0xCAD3F5,
+        muted_fg: 0xB8C0E0,
+        accent: 0xC6A0F6,
+        accent_fg: 0x181926,
+        red: 0xED8796,
+        green: 0xA6DA95,
+        yellow: 0xEED49F,
+        blue: 0x8AADF4,
+        magenta: 0xF5BDE6,
+        cyan: 0x8BD5CA,
+        keyword: 0xC6A0F6,
+        function: 0x8AADF4,
+        string: 0xA6DA95,
+        number: 0xF5A97F,
+        constant: 0xF5A97F,
+        type_: 0xEED49F,
+        operator: 0x91D7E3,
+        punct: 0x939AB7,
+        variable: 0xCAD3F5,
+        property: 0xB7BDF8,
+        comment: 0x6E738D,
+    },
+    // catppuccin (frappé)
+    Pal {
+        name: "Catppuccin Frappé",
+        light: false,
+        bg: 0x303446,
+        surface: 0x292C3C,
+        elevated: 0x414559,
+        input: 0x414559,
+        border: 0x414559,
+        hover: 0x393D50,
+        selection: 0x51576D,
+        fg: 0xC6D0F5,
+        muted_fg: 0xB5BFE2,
+        accent: 0xCA9EE6,
+        accent_fg: 0x232634,
+        red: 0xE78284,
+        green: 0xA6D189,
+        yellow: 0xE5C890,
+        blue: 0x8CAAEE,
+        magenta: 0xF4B8E4,
+        cyan: 0x81C8BE,
+        keyword: 0xCA9EE6,
+        function: 0x8CAAEE,
+        string: 0xA6D189,
+        number: 0xEF9F76,
+        constant: 0xEF9F76,
+        type_: 0xE5C890,
+        operator: 0x99D1DB,
+        punct: 0x949CBB,
+        variable: 0xC6D0F5,
+        property: 0xBABBF1,
+        comment: 0x737994,
+    },
+    // catppuccin (latte) — light
+    Pal {
+        name: "Catppuccin Latte",
+        light: true,
+        bg: 0xEFF1F5,
+        surface: 0xE6E9EF,
+        elevated: 0xFFFFFF,
+        input: 0xDCE0E8,
+        border: 0xCCD0DA,
+        hover: 0xE6E9EF,
+        selection: 0xBCC0CC,
+        fg: 0x4C4F69,
+        muted_fg: 0x5C5F77,
+        accent: 0x8839EF,
+        accent_fg: 0xFFFFFF,
+        red: 0xD20F39,
+        green: 0x40A02B,
+        yellow: 0xDF8E1D,
+        blue: 0x1E66F5,
+        magenta: 0xEA76CB,
+        cyan: 0x179299,
+        keyword: 0x8839EF,
+        function: 0x1E66F5,
+        string: 0x40A02B,
+        number: 0xFE640B,
+        constant: 0xFE640B,
+        type_: 0xDF8E1D,
+        operator: 0x04A5E5,
+        punct: 0x7C7F93,
+        variable: 0x4C4F69,
+        property: 0x7287FD,
+        comment: 0x9CA0B0,
+    },
+    // https://github.com/folke/tokyonight.nvim (night)
+    Pal {
+        name: "Tokyo Night",
+        light: false,
+        bg: 0x1A1B26,
+        surface: 0x16161E,
+        elevated: 0x292E42,
+        input: 0x292E42,
+        border: 0x292E42,
+        hover: 0x232433,
+        selection: 0x33467C,
+        fg: 0xC0CAF5,
+        muted_fg: 0xA9B1D6,
+        accent: 0x7AA2F7,
+        accent_fg: 0x16161E,
+        red: 0xF7768E,
+        green: 0x9ECE6A,
+        yellow: 0xE0AF68,
+        blue: 0x7AA2F7,
+        magenta: 0xBB9AF7,
+        cyan: 0x7DCFFF,
+        keyword: 0xBB9AF7,
+        function: 0x7AA2F7,
+        string: 0x9ECE6A,
+        number: 0xFF9E64,
+        constant: 0xFF9E64,
+        type_: 0x2AC3DE,
+        operator: 0x89DDFF,
+        punct: 0x89DDFF,
+        variable: 0xC0CAF5,
+        property: 0x73DACA,
+        comment: 0x565F89,
+    },
+    // https://github.com/morhetz/gruvbox (dark, medium)
+    Pal {
+        name: "Gruvbox Dark",
+        light: false,
+        bg: 0x282828,
+        surface: 0x1D2021,
+        elevated: 0x3C3836,
+        input: 0x3C3836,
+        border: 0x3C3836,
+        hover: 0x32302F,
+        selection: 0x504945,
+        fg: 0xEBDBB2,
+        muted_fg: 0xD5C4A1,
+        accent: 0xFABD2F,
+        accent_fg: 0x1D2021,
+        red: 0xFB4934,
+        green: 0xB8BB26,
+        yellow: 0xFABD2F,
+        blue: 0x83A598,
+        magenta: 0xD3869B,
+        cyan: 0x8EC07C,
+        keyword: 0xFB4934,
+        function: 0xB8BB26,
+        string: 0xB8BB26,
+        number: 0xD3869B,
+        constant: 0xD3869B,
+        type_: 0xFABD2F,
+        operator: 0xFE8019,
+        punct: 0xA89984,
+        variable: 0x83A598,
+        property: 0x8EC07C,
+        comment: 0x928374,
+    },
+    // https://github.com/joshdick/onedark.vim
+    Pal {
+        name: "One Dark",
+        light: false,
+        bg: 0x282C34,
+        surface: 0x21252B,
+        elevated: 0x2C313A,
+        input: 0x2C313A,
+        border: 0x181A1F,
+        hover: 0x2C313A,
+        selection: 0x3E4451,
+        fg: 0xABB2BF,
+        muted_fg: 0x9DA5B4,
+        accent: 0x61AFEF,
+        accent_fg: 0x21252B,
+        red: 0xE06C75,
+        green: 0x98C379,
+        yellow: 0xE5C07B,
+        blue: 0x61AFEF,
+        magenta: 0xC678DD,
+        cyan: 0x56B6C2,
+        keyword: 0xC678DD,
+        function: 0x61AFEF,
+        string: 0x98C379,
+        number: 0xD19A66,
+        constant: 0xD19A66,
+        type_: 0xE5C07B,
+        operator: 0x56B6C2,
+        punct: 0xABB2BF,
+        variable: 0xE06C75,
+        property: 0xE06C75,
+        comment: 0x5C6370,
+    },
+    // https://rosepinetheme.com/palette
+    Pal {
+        name: "Rosé Pine",
+        light: false,
+        bg: 0x191724,
+        surface: 0x1F1D2E,
+        elevated: 0x26233A,
+        input: 0x26233A,
+        border: 0x26233A,
+        hover: 0x21202E,
+        selection: 0x403D52,
+        fg: 0xE0DEF4,
+        muted_fg: 0xB9B6CF,
+        accent: 0xC4A7E7,
+        accent_fg: 0x191724,
+        red: 0xEB6F92,
+        green: 0x31748F,
+        yellow: 0xF6C177,
+        blue: 0x9CCFD8,
+        magenta: 0xC4A7E7,
+        cyan: 0xEBBCBA,
+        keyword: 0x31748F,
+        function: 0xEBBCBA,
+        string: 0xF6C177,
+        number: 0xF6C177,
+        constant: 0xEBBCBA,
+        type_: 0x9CCFD8,
+        operator: 0x908CAA,
+        punct: 0x908CAA,
+        variable: 0xE0DEF4,
+        property: 0xC4A7E7,
+        comment: 0x6E6A86,
+    },
+    // https://www.nordtheme.com
+    Pal {
+        name: "Nord",
+        light: false,
+        bg: 0x2E3440,
+        surface: 0x292E39,
+        elevated: 0x3B4252,
+        input: 0x3B4252,
+        border: 0x3B4252,
+        hover: 0x353B49,
+        selection: 0x434C5E,
+        fg: 0xD8DEE9,
+        muted_fg: 0xC0C8D6,
+        accent: 0x88C0D0,
+        accent_fg: 0x2E3440,
+        red: 0xBF616A,
+        green: 0xA3BE8C,
+        yellow: 0xEBCB8B,
+        blue: 0x81A1C1,
+        magenta: 0xB48EAD,
+        cyan: 0x8FBCBB,
+        keyword: 0x81A1C1,
+        function: 0x88C0D0,
+        string: 0xA3BE8C,
+        number: 0xB48EAD,
+        constant: 0xB48EAD,
+        type_: 0x8FBCBB,
+        operator: 0x81A1C1,
+        punct: 0xECEFF4,
+        variable: 0xD8DEE9,
+        property: 0x8FBCBB,
+        comment: 0x616E88,
+    },
+    // Omarchy "ethereal" (github.com/basecamp/omarchy, themes/ethereal/colors.toml)
+    Pal {
+        name: "Ethereal",
+        light: false,
+        bg: 0x060B1E,
+        surface: 0x040816,
+        elevated: 0x131A3A,
+        input: 0x131A3A,
+        border: 0x292632,
+        hover: 0x151727,
+        selection: 0x252E56,
+        fg: 0xFFCEAD,
+        muted_fg: 0x6D7DB6,
+        accent: 0x7D82D9,
+        accent_fg: 0x060B1E,
+        red: 0xED5B5A,
+        green: 0x92A593,
+        yellow: 0xE9BB4F,
+        blue: 0x7D82D9,
+        magenta: 0xC89DC1,
+        cyan: 0xA3BFD1,
+        keyword: 0xC89DC1,
+        function: 0x7D82D9,
+        string: 0x92A593,
+        number: 0xEB8B54,
+        constant: 0xEB8B54,
+        type_: 0xE9BB4F,
+        operator: 0xA3BFD1,
+        punct: 0x6D7DB6,
+        variable: 0xFFCEAD,
+        property: 0xA3BFD1,
+        comment: 0x6D7DB6,
+    },
+    // Omarchy "everforest" (github.com/basecamp/omarchy, themes/everforest/colors.toml)
+    Pal {
+        name: "Everforest",
+        light: false,
+        bg: 0x2D353B,
+        surface: 0x21272C,
+        elevated: 0x343F44,
+        input: 0x343F44,
+        border: 0x44494B,
+        hover: 0x373E42,
+        selection: 0x3D484D,
+        fg: 0xD3C6AA,
+        muted_fg: 0x475258,
+        accent: 0x7FBBB3,
+        accent_fg: 0x2D353B,
+        red: 0xE67E80,
+        green: 0xA7C080,
+        yellow: 0xDBBC7F,
+        blue: 0x7FBBB3,
+        magenta: 0xD699B6,
+        cyan: 0x83C092,
+        keyword: 0xD699B6,
+        function: 0x7FBBB3,
+        string: 0xA7C080,
+        number: 0xE09D7F,
+        constant: 0xE09D7F,
+        type_: 0xDBBC7F,
+        operator: 0x83C092,
+        punct: 0x475258,
+        variable: 0xD3C6AA,
+        property: 0x83C092,
+        comment: 0x475258,
+    },
+    // Omarchy "flexoki-light" (github.com/basecamp/omarchy, themes/flexoki-light/colors.toml)
+    Pal {
+        name: "Flexoki Light",
+        light: true,
+        bg: 0xFFFCF0,
+        surface: 0xF2EFE4,
+        elevated: 0xE6E4D9,
+        input: 0xE6E4D9,
+        border: 0xD9D6CC,
+        hover: 0xF1EEE2,
+        selection: 0xCECDC3,
+        fg: 0x100F0F,
+        muted_fg: 0xB7B5AC,
+        accent: 0x205EA6,
+        accent_fg: 0xFFFCF0,
+        red: 0xD14D41,
+        green: 0x879A39,
+        yellow: 0xD0A215,
+        blue: 0x205EA6,
+        magenta: 0xCE5D97,
+        cyan: 0x3AA99F,
+        keyword: 0xCE5D97,
+        function: 0x205EA6,
+        string: 0x879A39,
+        number: 0xD0772B,
+        constant: 0xD0772B,
+        type_: 0xD0A215,
+        operator: 0x3AA99F,
+        punct: 0xB7B5AC,
+        variable: 0x100F0F,
+        property: 0x3AA99F,
+        comment: 0xB7B5AC,
+    },
+    // Omarchy "hackerman" (github.com/basecamp/omarchy, themes/hackerman/colors.toml)
+    Pal {
+        name: "Hackerman",
+        light: false,
+        bg: 0x0B0C16,
+        surface: 0x080910,
+        elevated: 0x151828,
+        input: 0x151828,
+        border: 0x282D37,
+        hover: 0x181A24,
+        selection: 0x1F253A,
+        fg: 0xDDF7FF,
+        muted_fg: 0x2D3450,
+        accent: 0x82FB9C,
+        accent_fg: 0x0B0C16,
+        red: 0x50F872,
+        green: 0x4FE88F,
+        yellow: 0x50F7D4,
+        blue: 0x829DD4,
+        magenta: 0x86A7DF,
+        cyan: 0x7CF8F7,
+        keyword: 0x86A7DF,
+        function: 0x829DD4,
+        string: 0x4FE88F,
+        number: 0x50F7A3,
+        constant: 0x50F7A3,
+        type_: 0x50F7D4,
+        operator: 0x7CF8F7,
+        punct: 0x2D3450,
+        variable: 0xDDF7FF,
+        property: 0x7CF8F7,
+        comment: 0x2D3450,
+    },
+    // Omarchy "last-horizon" (github.com/basecamp/omarchy, themes/last-horizon/colors.toml)
+    Pal {
+        name: "Last Horizon",
+        light: false,
+        bg: 0x0C0B0C,
+        surface: 0x090809,
+        elevated: 0x0C0B0C,
+        input: 0x0C0B0C,
+        border: 0x2D2D2D,
+        hover: 0x1A191A,
+        selection: 0x584E51,
+        fg: 0xFAFCFB,
+        muted_fg: 0x584E51,
+        accent: 0xB59790,
+        accent_fg: 0x0C0B0C,
+        red: 0xC38B7B,
+        green: 0x87A9B0,
+        yellow: 0x6B5E73,
+        blue: 0xB59790,
+        magenta: 0xC4D8E2,
+        cyan: 0xA5A0B6,
+        keyword: 0xC4D8E2,
+        function: 0xB59790,
+        string: 0x87A9B0,
+        number: 0x6B5E73,
+        constant: 0x6B5E73,
+        type_: 0x6B5E73,
+        operator: 0xA5A0B6,
+        punct: 0x584E51,
+        variable: 0xFAFCFB,
+        property: 0xA5A0B6,
+        comment: 0x584E51,
+    },
+    // Omarchy "lumon" (github.com/basecamp/omarchy, themes/lumon/colors.toml)
+    Pal {
+        name: "Lumon",
+        light: false,
+        bg: 0x16242D,
+        surface: 0x101B21,
+        elevated: 0x1B2D40,
+        input: 0x1B2D40,
+        border: 0x313F48,
+        hover: 0x222F39,
+        selection: 0x243D56,
+        fg: 0xD6E2EE,
+        muted_fg: 0x304860,
+        accent: 0x8BC9EB,
+        accent_fg: 0x16242D,
+        red: 0x4D86B0,
+        green: 0x5E95BC,
+        yellow: 0x6FA4C9,
+        blue: 0x6FB8E3,
+        magenta: 0x8BC9EB,
+        cyan: 0xB4E4F6,
+        keyword: 0x8BC9EB,
+        function: 0x6FB8E3,
+        string: 0x5E95BC,
+        number: 0x8BC9EB,
+        constant: 0x8BC9EB,
+        type_: 0x6FA4C9,
+        operator: 0xB4E4F6,
+        punct: 0x304860,
+        variable: 0xD6E2EE,
+        property: 0xB4E4F6,
+        comment: 0x304860,
+    },
+    // Omarchy "lupine" (github.com/basecamp/omarchy, themes/lupine/colors.toml)
+    Pal {
+        name: "Lupine",
+        light: true,
+        bg: 0xFAFAFA,
+        surface: 0xECECEC,
+        elevated: 0xF5F5F5,
+        input: 0xF5F5F5,
+        border: 0xD7D7D7,
+        hover: 0xEDEDED,
+        selection: 0xD0D0D0,
+        fg: 0x212121,
+        muted_fg: 0x9E9E9E,
+        accent: 0x3264EB,
+        accent_fg: 0xFAFAFA,
+        red: 0xC900C4,
+        green: 0x4A2FD0,
+        yellow: 0x026FDE,
+        blue: 0x3264EB,
+        magenta: 0x8A4AD7,
+        cyan: 0x0C67DE,
+        keyword: 0x8A4AD7,
+        function: 0x3264EB,
+        string: 0x4A2FD0,
+        number: 0x026FDE,
+        constant: 0x026FDE,
+        type_: 0x026FDE,
+        operator: 0x0C67DE,
+        punct: 0x9E9E9E,
+        variable: 0x212121,
+        property: 0x0C67DE,
+        comment: 0x9E9E9E,
+    },
+    // Omarchy "matte-black" (github.com/basecamp/omarchy, themes/matte-black/colors.toml)
+    Pal {
+        name: "Matte Black",
+        light: false,
+        bg: 0x121212,
+        surface: 0x0D0D0D,
+        elevated: 0x1E1E1E,
+        input: 0x1E1E1E,
+        border: 0x2A2A2A,
+        hover: 0x1C1C1C,
+        selection: 0x2A2A2A,
+        fg: 0xBEBEBE,
+        muted_fg: 0x333333,
+        accent: 0xE68E0D,
+        accent_fg: 0x121212,
+        red: 0xD35F5F,
+        green: 0xFFC107,
+        yellow: 0xB91C1C,
+        blue: 0xE68E0D,
+        magenta: 0xD35F5F,
+        cyan: 0xBEBEBE,
+        keyword: 0xD35F5F,
+        function: 0xE68E0D,
+        string: 0xFFC107,
+        number: 0xC63D3D,
+        constant: 0xC63D3D,
+        type_: 0xB91C1C,
+        operator: 0xBEBEBE,
+        punct: 0x333333,
+        variable: 0xBEBEBE,
+        property: 0xBEBEBE,
+        comment: 0x333333,
+    },
+    // Omarchy "miasma" (github.com/basecamp/omarchy, themes/miasma/colors.toml)
+    Pal {
+        name: "Miasma",
+        light: false,
+        bg: 0x222222,
+        surface: 0x191919,
+        elevated: 0x2C2C2C,
+        input: 0x2C2C2C,
+        border: 0x383836,
+        hover: 0x2C2C2B,
+        selection: 0x383838,
+        fg: 0xC2C2B0,
+        muted_fg: 0x666666,
+        accent: 0x78824B,
+        accent_fg: 0x222222,
+        red: 0x685742,
+        green: 0x5F875F,
+        yellow: 0xB36D43,
+        blue: 0x78824B,
+        magenta: 0xBB7744,
+        cyan: 0xC9A554,
+        keyword: 0xBB7744,
+        function: 0x78824B,
+        string: 0x5F875F,
+        number: 0x8D6242,
+        constant: 0x8D6242,
+        type_: 0xB36D43,
+        operator: 0xC9A554,
+        punct: 0x666666,
+        variable: 0xC2C2B0,
+        property: 0xC9A554,
+        comment: 0x666666,
+    },
+    // Omarchy "osaka-jade" (github.com/basecamp/omarchy, themes/osaka-jade/colors.toml)
+    Pal {
+        name: "Osaka Jade",
+        light: false,
+        bg: 0x111C18,
+        surface: 0x0C1512,
+        elevated: 0x23372B,
+        input: 0x23372B,
+        border: 0x2A342A,
+        hover: 0x1C2620,
+        selection: 0x32473B,
+        fg: 0xC1C497,
+        muted_fg: 0x53685B,
+        accent: 0x509475,
+        accent_fg: 0x111C18,
+        red: 0xFF5345,
+        green: 0x549E6A,
+        yellow: 0x459451,
+        blue: 0x509475,
+        magenta: 0xD2689C,
+        cyan: 0x2DD5B7,
+        keyword: 0xD2689C,
+        function: 0x509475,
+        string: 0x549E6A,
+        number: 0xA2734B,
+        constant: 0xA2734B,
+        type_: 0x459451,
+        operator: 0x2DD5B7,
+        punct: 0x53685B,
+        variable: 0xC1C497,
+        property: 0x2DD5B7,
+        comment: 0x53685B,
+    },
+    // Omarchy "retro-82" (github.com/basecamp/omarchy, themes/retro-82/colors.toml)
+    Pal {
+        name: "Retro 82",
+        light: false,
+        bg: 0x05182E,
+        surface: 0x031222,
+        elevated: 0x0A2540,
+        input: 0x0A2540,
+        border: 0x273340,
+        hover: 0x132436,
+        selection: 0x134E5A,
+        fg: 0xF6DCAC,
+        muted_fg: 0x2A6B78,
+        accent: 0xFAA968,
+        accent_fg: 0x05182E,
+        red: 0xF85525,
+        green: 0x028391,
+        yellow: 0xE97B3C,
+        blue: 0x3F8F8A,
+        magenta: 0x3F8F8A,
+        cyan: 0x8CBFB8,
+        keyword: 0x3F8F8A,
+        function: 0x3F8F8A,
+        string: 0x028391,
+        number: 0xFAA968,
+        constant: 0xFAA968,
+        type_: 0xE97B3C,
+        operator: 0x8CBFB8,
+        punct: 0x2A6B78,
+        variable: 0xF6DCAC,
+        property: 0x8CBFB8,
+        comment: 0x2A6B78,
+    },
+    // Omarchy "ristretto" (github.com/basecamp/omarchy, themes/ristretto/colors.toml)
+    Pal {
+        name: "Ristretto",
+        light: false,
+        bg: 0x2C2525,
+        surface: 0x211B1B,
+        elevated: 0x3D2F2A,
+        input: 0x3D2F2A,
+        border: 0x463E3E,
+        hover: 0x373030,
+        selection: 0x403E41,
+        fg: 0xE6D9DB,
+        muted_fg: 0x72696A,
+        accent: 0xF38D70,
+        accent_fg: 0x2C2525,
+        red: 0xFD6883,
+        green: 0xADDA78,
+        yellow: 0xF9CC6C,
+        blue: 0xF38D70,
+        magenta: 0xA8A9EB,
+        cyan: 0x85DACC,
+        keyword: 0xA8A9EB,
+        function: 0xF38D70,
+        string: 0xADDA78,
+        number: 0xFB9A77,
+        constant: 0xFB9A77,
+        type_: 0xF9CC6C,
+        operator: 0x85DACC,
+        punct: 0x72696A,
+        variable: 0xE6D9DB,
+        property: 0x85DACC,
+        comment: 0x72696A,
+    },
+    // Omarchy "solitude" (github.com/basecamp/omarchy, themes/solitude/colors.toml)
+    Pal {
+        name: "Solitude",
+        light: false,
+        bg: 0x101315,
+        surface: 0x0C0E10,
+        elevated: 0x101315,
+        input: 0x101315,
+        border: 0x2A2D2F,
+        hover: 0x1B1E20,
+        selection: 0x343D41,
+        fg: 0xCACCCC,
+        muted_fg: 0x4B4E55,
+        accent: 0x798186,
+        accent_fg: 0x101315,
+        red: 0x565D60,
+        green: 0x9FA5A9,
+        yellow: 0xD9DBDC,
+        blue: 0x798186,
+        magenta: 0xAEAEAE,
+        cyan: 0x707070,
+        keyword: 0xAEAEAE,
+        function: 0x798186,
+        string: 0x9FA5A9,
+        number: 0xD9DBDC,
+        constant: 0xD9DBDC,
+        type_: 0xD9DBDC,
+        operator: 0x707070,
+        punct: 0x4B4E55,
+        variable: 0xCACCCC,
+        property: 0x707070,
+        comment: 0x4B4E55,
+    },
+    // Omarchy "vantablack" (github.com/basecamp/omarchy, themes/vantablack/colors.toml)
+    Pal {
+        name: "Vantablack",
+        light: false,
+        bg: 0x000000,
+        surface: 0x090909,
+        elevated: 0x1A1A1A,
+        input: 0x1A1A1A,
+        border: 0x242424,
+        hover: 0x0F0F0F,
+        selection: 0x1A1A1A,
+        fg: 0xFFFFFF,
+        muted_fg: 0x7A7A7A,
+        accent: 0x8D8D8D,
+        accent_fg: 0x000000,
+        red: 0xA4A4A4,
+        green: 0xB6B6B6,
+        yellow: 0xCECECE,
+        blue: 0x8D8D8D,
+        magenta: 0x9B9B9B,
+        cyan: 0xB0B0B0,
+        keyword: 0x9B9B9B,
+        function: 0x8D8D8D,
+        string: 0xB6B6B6,
+        number: 0xB9B9B9,
+        constant: 0xB9B9B9,
+        type_: 0xCECECE,
+        operator: 0xB0B0B0,
+        punct: 0x7A7A7A,
+        variable: 0xFFFFFF,
+        property: 0xB0B0B0,
+        comment: 0x7A7A7A,
+    },
+    // Omarchy "white" (github.com/basecamp/omarchy, themes/white/colors.toml)
+    Pal {
+        name: "White",
+        light: true,
+        bg: 0xFFFFFF,
+        surface: 0xF5F5F5,
+        elevated: 0xC0C0C0,
+        input: 0xC0C0C0,
+        border: 0xD6D6D6,
+        hover: 0xF0F0F0,
+        selection: 0xC0C0C0,
+        fg: 0x000000,
+        muted_fg: 0x808080,
+        accent: 0x6E6E6E,
+        accent_fg: 0xFFFFFF,
+        red: 0x2A2A2A,
+        green: 0x3A3A3A,
+        yellow: 0x4A4A4A,
+        blue: 0x1A1A1A,
+        magenta: 0x2E2E2E,
+        cyan: 0x3E3E3E,
+        keyword: 0x2E2E2E,
+        function: 0x1A1A1A,
+        string: 0x3A3A3A,
+        number: 0x4A4A4A,
+        constant: 0x4A4A4A,
+        type_: 0x4A4A4A,
+        operator: 0x3E3E3E,
+        punct: 0x808080,
+        variable: 0x000000,
+        property: 0x3E3E3E,
+        comment: 0x808080,
+    },
+];
+
+/// True when `c` is close in hue to a pending-change color (edited orange,
+/// deleted red, added green), so a selection in it would read as one.
+pub fn clashes_with_changes(c: gpui_kit::Hsla) -> bool {
+    if c.s < 0.25 {
+        return false;
+    }
+    [crate::theme::EDITED, crate::theme::DELETED, crate::theme::ADDED]
+        .iter()
+        .any(|&v| {
+            let d = (gpui_kit::Hsla::from(gpui_kit::rgb(v)).h - c.h).abs();
+            d.min(1. - d) < 30. / 360.
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every palette must parse as a kit ThemeConfig (colors + highlight).
+    #[test]
+    fn palettes_parse_as_kit_theme_configs() {
+        for p in PALETTES {
+            let v = config_json(p);
+            let cfg: Result<gpui_kit::component::theme::ThemeConfig, _> = serde_json::from_value(v);
+            assert!(cfg.is_ok(), "{}: {:?}", p.name, cfg.err());
+            assert!(cfg.unwrap().highlight.is_some(), "{} highlight", p.name);
+        }
+        assert_eq!(names(false)[0], DEFAULT_DARK);
+        assert_eq!(names(true)[0], DEFAULT_LIGHT);
+        assert!(names(true).iter().all(|n| find(n).is_some_and(|p| p.light)));
+    }
+
+    /// Column / row rules stay visible on hovered and striped rows.
+    #[test]
+    fn grid_lines_clear_hover_and_stripes() {
+        let lum = |c: u32| {
+            let ch = |s: u32| ((c >> s) & 0xFF) as f32;
+            0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
+        };
+        for p in PALETTES {
+            let line = grid_line(p);
+            assert!((lum(line) - lum(p.hover)).abs() >= 10., "{} vs hover", p.name);
+            let b = visible_border(p);
+            assert!((lum(b) - lum(p.elevated)).abs() >= 8., "{} border vs popover", p.name);
+        }
+    }
+
+    #[test]
+    fn accents_clear_of_change_colors() {
+        use gpui_kit::{Hsla, rgb};
+        for &(name, dark, light) in crate::settings::ACCENTS {
+            if name == "Theme" {
+                continue;
+            }
+            assert!(!super::clashes_with_changes(Hsla::from(rgb(dark))), "{name}");
+            assert!(!super::clashes_with_changes(Hsla::from(rgb(light))), "{name}");
+        }
+        assert!(super::clashes_with_changes(Hsla::from(rgb(0xF0A23A))));
+        assert!(super::clashes_with_changes(Hsla::from(rgb(0x5CC26B))));
+        assert!(!super::clashes_with_changes(Hsla::from(rgb(0x4A90F0))));
+    }
+}
