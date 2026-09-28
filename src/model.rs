@@ -96,7 +96,7 @@ pub fn categorize(status: &str) -> Category {
 /// The status word of a status line, without a note after it.
 fn clean_status(s: &str) -> String {
     let s = s.trim().trim_matches('`');
-    let cut = [" (", "(", ",", ";", " - ", " — ", " – ", ": "]
+    let cut = [" (", "(", "（", ",", "，", ";", "；", "、", " - ", " — ", " – ", ": ", "："]
         .iter()
         .filter_map(|sep| s.find(sep))
         .min()
@@ -398,9 +398,30 @@ impl Board {
         }
 
         for (dir, doc) in docs {
-            if let Some(&ix) = project_ix.get(&dir) {
-                projects[ix].docs.push(doc);
-            }
+            // A spec or map with no tickets yet is still a project.
+            let ix = match project_ix.get(&dir) {
+                Some(&ix) => ix,
+                None if doc_rank(&doc.name) <= 2 => {
+                    let rel = dir
+                        .strip_prefix(&root)
+                        .ok()
+                        .map(|r| r.display().to_string())
+                        .filter(|r| !r.is_empty())
+                        .unwrap_or_else(|| dir_name(&dir));
+                    projects.push(Project {
+                        name: rel,
+                        title: humanize(&dir_name(&dir)),
+                        dir: dir.clone(),
+                        key: String::new(),
+                        docs: Vec::new(),
+                        map: None,
+                    });
+                    project_ix.insert(dir.clone(), projects.len() - 1);
+                    projects.len() - 1
+                }
+                None => continue,
+            };
+            projects[ix].docs.push(doc);
         }
         for p in &mut projects {
             p.docs.sort_by_key(|d| doc_rank(&d.name));
@@ -410,7 +431,9 @@ impl Board {
                 .find(|d| d.name.eq_ignore_ascii_case("map.md"))
                 .and_then(|d| std::fs::read_to_string(&d.path).ok().map(|t| parse_map(&d.path, &t)));
             if let Some(d) = p.docs.first() {
-                let t = d.title.trim();
+                // "PRD: Cookbooks" and "Spec: Cookbooks" name the doc, not the project.
+                let t = DOC_PREFIX.replace(d.title.trim(), "");
+                let t = t.trim();
                 if !t.is_empty() {
                     p.title = t.to_string();
                 }
@@ -725,6 +748,13 @@ fn resolve_relations(projects: &[Project], tickets: &mut [Ticket]) {
                 .and_then(|p| by_path.get(&canon(p)).copied())
                 .or_else(|| r.num.and_then(|num| by_num.get(&(tickets[i].project, num)).copied()))
                 .or_else(|| {
+                    // A bare path such as `.scratch/x/issues/01-a.md`.
+                    let text = r.text.trim().trim_matches(['`', '"']);
+                    text.ends_with(".md")
+                        .then(|| (0..n).find(|&j| tickets[j].path.ends_with(Path::new(text).components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect::<PathBuf>())))
+                        .flatten()
+                })
+                .or_else(|| {
                     // "Blocked by" may name a ticket by its title.
                     let want = r.text.trim().trim_matches(['`', '"', '*']).to_lowercase();
                     let same = |j: &usize| tickets[*j].project == tickets[i].project;
@@ -819,6 +849,9 @@ pub enum Tracker {
     /// No sign of mattpocock/skills: no tracker doc, no `.scratch/`, no
     /// ticket folder.
     Missing,
+    /// The tracker doc names a local folder that this clone does not have,
+    /// usually because git ignores it.
+    Absent(String),
 }
 
 /// Finds the local tracker of a picked folder. A repo root resolves
@@ -837,13 +870,9 @@ pub fn locate_tracker(picked: &Path) -> Tracker {
         return Tracker::Remote(name);
     }
     // The local template names its folder in backticks: "files in `.scratch/`".
-    let configured = LOCAL_FOLDER
-        .captures(&config)
-        .map(|c| c[1].trim_end_matches('/').to_string())
-        .map(|rel| picked.join(rel))
-        .filter(|p| p.is_dir());
-    if let Some(dir) = configured {
-        return Tracker::Local(dir);
+    if let Some(rel) = LOCAL_FOLDER.captures(&config).map(|c| c[1].trim_end_matches('/').to_string()) {
+        let dir = picked.join(&rel);
+        return if dir.is_dir() { Tracker::Local(dir) } else { Tracker::Absent(rel) };
     }
     if scratch.is_dir() {
         return Tracker::Local(scratch);
@@ -878,7 +907,7 @@ fn tracker_doc(repo: &Path) -> PathBuf {
 }
 
 static BRIEF_CATEGORY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\*\*Category:\*\*\s*`?([A-Za-z-]+)").unwrap());
-static LOCAL_FOLDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"markdown files (?:in|under) `([^`]+)`").unwrap());
+static LOCAL_FOLDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)markdown files\W{0,3}(?:in|under) `([^`]+)`").unwrap());
 static DOC_POINTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+\.md)`").unwrap());
 
 /// A folder holds a local tracker: an `issues/` folder with markdown, or a
@@ -1016,8 +1045,9 @@ static CHECK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\s*)[-*+] \[( |x|X)\] (.*)$").unwrap());
 static MD_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)\s]+\.md)(#[^)]*)?\)").unwrap());
+static DOC_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:PRD|Spec|Map)\s*[:：]\s*").unwrap());
 static TITLE_NUM: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^#?(\d{1,4})\s*[:.)-]\s*(.+)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^#?(\d{1,4})(?:\s*[:.)\-：—–]\s*|\s+)(.+)$").unwrap());
 static LEAD_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#?(\d{1,4})\b").unwrap());
 
 /// YAML front matter as flat `key → raw value`, and the line where the body starts.
@@ -1252,7 +1282,7 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
         prev_blank = blank;
     }
 
-    let labels = get("labels")
+    let labels: Vec<String> = get("labels")
         .or_else(|| get("label"))
         .or_else(|| get("tags"))
         .map(|v| {
@@ -1278,6 +1308,8 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
         // Triage writes the category (bug, enhancement) in its agent brief.
         kind: get("type")
             .or_else(|| BRIEF_CATEGORY.captures(text).map(|c| c[1].to_string()))
+            // Some trackers keep the wayfinder type as a label: `wayfinder:research`.
+            .or_else(|| labels.iter().find_map(|l| l.strip_prefix("wayfinder:").map(str::to_string)))
             .map(|s| s.to_lowercase()),
         props: props.clone(),
         blocked_refs,
@@ -1305,9 +1337,14 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
 
 /// `01 (Repo toolchain), 03; [x](../issues/04-y.md)` → refs.
 pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
-    let v = value.trim();
+    // A note after a long dash explains the blockers; it names none.
+    let v = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let v = [" — ", " – ", " —", "——"].iter().filter_map(|d| v.find(d)).min().map_or(v.as_str(), |i| &v[..i]).trim();
     let lower = v.to_lowercase();
-    if lower.starts_with("none") || lower == "-" || lower == "n/a" || lower.is_empty() {
+    // "None" in the languages people write tickets in.
+    const NONE: [&str; 14] =
+        ["none", "nothing", "n/a", "-", "无", "無", "なし", "없음", "yok", "keine", "aucun", "ninguno", "nenhum", "нет"];
+    if lower.is_empty() || NONE.iter().any(|w| lower == *w || lower.starts_with(&format!("{w} ")) || lower.starts_with(&format!("{w}（")) || lower.starts_with(&format!("{w}("))) {
         return Vec::new();
     }
     let mut parts = Vec::new();
@@ -1331,6 +1368,8 @@ pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .flat_map(|p| {
+            // `01, and 03`: a joining word before the next reference.
+            let p = p.strip_prefix("and ").or_else(|| p.strip_prefix("& ")).unwrap_or(&p).to_string();
             // `01 and 02` / `01, 02` written without commas.
             if p.contains(" and ") && !p.contains('(') {
                 p.split(" and ").map(str::to_string).collect::<Vec<_>>()
@@ -1376,6 +1415,7 @@ mod tests {
         assert_eq!(clean_status("done (merged #12)"), "done");
         assert_eq!(clean_status("`resolved` - see answer"), "resolved");
         assert_eq!(clean_status("in progress"), "in progress");
+        assert_eq!(clean_status("done（2026-07-29 实现完成）"), "done");
     }
 
     #[test]
@@ -1423,6 +1463,10 @@ mod tests {
         std::fs::write(moved.join("notes/tracker.md"), "# Issue tracker: ours\n\nIssues live as markdown files in `tickets-here/`.\n").unwrap();
         assert_eq!(locate_tracker(&moved), Tracker::Local(moved.join("tickets-here")));
         let _ = std::fs::remove_dir_all(&moved);
+
+        let ignored = temp_repo("ignored", Some("# Issue tracker: Local Markdown\n\nIssues live as local Markdown files under `.scratch/issues/`.\n"), false);
+        assert_eq!(locate_tracker(&ignored), Tracker::Absent(".scratch/issues".into()));
+        let _ = std::fs::remove_dir_all(&ignored);
 
         let plain = temp_repo("plain", None, false);
         assert_eq!(locate_tracker(&plain), Tracker::Missing);
@@ -1491,6 +1535,9 @@ mod tests {
         let r = parse_refs("02, 03 (Sign in (server))", Path::new("/"));
         assert_eq!(r.len(), 2);
         assert_eq!(r[1].num, Some(3));
+        assert_eq!(parse_refs("04, 22 — both shipped; this revises where 04 put the list.", Path::new("/x")).len(), 2);
+        assert!(parse_refs("无（第一张票；02 / 03 依赖本票）", Path::new("/x")).is_empty());
+        assert!(parse_refs("Yok", Path::new("/x")).is_empty());
     }
 
     #[test]

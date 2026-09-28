@@ -304,6 +304,19 @@ impl KuzgunApp {
                 cx.notify();
                 return;
             }
+            model::Tracker::Absent(rel) => {
+                self.welcome_notice = Some(format!(
+                    "{} keeps its tickets in {rel}/, but that folder is not here. Its .gitignore may leave it out of the repo.",
+                    store::default_name(&path)
+                ));
+                if self.screen != Screen::Welcome {
+                    self.close_board(window, cx);
+                }
+                self.saved.retain(|b| b.path != path);
+                store::save_boards(&self.saved);
+                cx.notify();
+                return;
+            }
             model::Tracker::Missing => {
                 self.welcome_notice = Some(format!(
                     "{} does not use mattpocock/skills: it has no docs/agents/issue-tracker.md, no .scratch/ folder and no ticket files.",
@@ -677,7 +690,9 @@ impl KuzgunApp {
     /// - in review or closed: none.
     pub fn next_command(&self, i: usize) -> Option<(&'static str, String, &'static str)> {
         let t = &self.board.tickets[i];
-        if t.category.is_closed() || t.category == Category::InReview {
+        // Someone is on it, it waits on review, or it is closed: nothing to
+        // hand over.
+        if t.category.is_closed() || matches!(t.category, Category::InProgress | Category::InReview) {
             return None;
         }
         let rel = repo_relative(&t.path);
@@ -705,7 +720,7 @@ impl KuzgunApp {
     /// the chosen terminal, in the repo folder.
     pub fn start_agent(&mut self, path: &Path, _cx: &mut Context<Self>) {
         let Some((_, cmd, _)) = self.board.find_path(path).and_then(|i| self.next_command(i)) else {
-            self.toast(None, "Nothing to hand to an agent: it is in review or closed.");
+            self.toast(None, "Nothing to hand to an agent: it is in progress, in review or closed.");
             return;
         };
         let Some(repo) = self.root.as_deref().and_then(crate::agents::repo_root) else {

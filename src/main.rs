@@ -32,6 +32,49 @@ struct MainWindow(AnyWindowHandle);
 impl Global for MainWindow {}
 
 fn main() {
+    // `kuzgun --inspect <folder>`: print what Kuzgun reads, for checks.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--inspect") {
+        let picked = std::path::PathBuf::from(args.get(2).cloned().unwrap_or_else(|| ".".into()));
+        let root = match model::locate_tracker(&picked) {
+            model::Tracker::Local(p) => p,
+            other => {
+                println!("tracker: {other:?}");
+                return;
+            }
+        };
+        let b = model::Board::load(&root);
+        println!("tracker: {}", root.display());
+        println!("tickets: {}  errors: {}", b.tickets.len(), b.errors.len());
+        for (pi, p) in b.projects.iter().enumerate() {
+            let n = b.tickets.iter().filter(|t| t.project == pi).count();
+            let docs: Vec<&str> = p.docs.iter().map(|d| d.name.as_str()).collect();
+            println!("  project {} [{}] {n} tickets, docs {docs:?}, map {}", p.title, p.key, p.map.is_some());
+        }
+        let mut st: std::collections::BTreeMap<String, usize> = Default::default();
+        for t in &b.tickets {
+            *st.entry(format!("{} -> {:?}", t.status_key, t.category)).or_default() += 1;
+        }
+        for (k, v) in st {
+            println!("  status {k}: {v}");
+        }
+        let edges: usize = b.tickets.iter().map(|t| t.blocked_by.len()).sum();
+        let refs: usize = b.tickets.iter().map(|t| t.blocked_refs.len()).sum();
+        let unresolved: Vec<String> = b
+            .tickets
+            .iter()
+            .flat_map(|t| t.blocked_refs.iter().filter(|r| r.hit.is_none() && r.project.is_none()).map(move |r| format!("{}: {}", t.key, r.text)))
+            .collect();
+        println!("  blocked-by refs {refs}, resolved edges {edges}, unresolved {}", unresolved.len());
+        for u in unresolved.iter().take(8) {
+            println!("    ? {u}");
+        }
+        let facets: Vec<String> = b.facets.iter().map(|f| format!("{}({})", f.key, f.values.len())).collect();
+        println!("  facets {facets:?}");
+        let (checks, done): (usize, usize) = b.tickets.iter().map(|t| t.checklist_counts()).fold((0, 0), |a, (d, n)| (a.0 + n, a.1 + d));
+        println!("  checkboxes {done}/{checks}, untitled {}", b.tickets.iter().filter(|t| t.title.is_empty()).count());
+        return;
+    }
     if std::env::args().any(|a| a == "--test-notification") {
         let r = notify::send("Kuzgun", "Notifications work.");
         println!("{r:?}");
