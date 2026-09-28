@@ -1866,8 +1866,7 @@ fn attention_of(b: &Board, _blocked: &[bool]) -> Vec<Vec<String>> {
             .iter()
             .filter(|rf| {
                 let doc = rf.path.as_ref().is_some_and(|p| p.is_file() && b.find_path(p).is_none());
-                !doc && !t.blocked_by.iter().any(|&j| b.tickets[j].num.is_some() && b.tickets[j].num == rf.num)
-                    && !t.blocked_by.iter().any(|&j| rf.path.as_ref().is_some_and(|p| std::fs::canonicalize(p).ok() == std::fs::canonicalize(&b.tickets[j].path).ok()))
+                !doc && rf.hit.is_none() && rf.project.is_none()
             })
             .count();
         if dangling > 0 {

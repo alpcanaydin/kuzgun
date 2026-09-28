@@ -177,6 +177,11 @@ pub struct RefSpec {
     pub num: Option<u32>,
     pub path: Option<PathBuf>,
     pub text: String,
+    /// The ticket it names, once resolved.
+    pub hit: Option<usize>,
+    /// The project it names, when it links a spec or map: the ticket waits
+    /// until that whole project is closed.
+    pub project: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -478,9 +483,13 @@ impl Board {
     pub fn is_blocked(&self, ix: usize) -> bool {
         let t = &self.tickets[ix];
         !t.category.is_closed()
-            && t.blocked_by
-                .iter()
-                .any(|&b| !self.tickets[b].category.is_closed())
+            && (t.blocked_by.iter().any(|&b| !self.tickets[b].category.is_closed())
+                || t.blocked_refs.iter().filter_map(|r| r.project).any(|p| self.project_open(p)))
+    }
+
+    /// The project has a ticket that is not closed.
+    pub fn project_open(&self, p: usize) -> bool {
+        self.tickets.iter().any(|t| t.project == p && !t.category.is_closed())
     }
 
 
@@ -704,11 +713,11 @@ fn resolve_relations(projects: &[Project], tickets: &mut [Ticket]) {
         }
         by_path.insert(canon(&t.path), i);
     }
-    let _ = projects;
     let n = tickets.len();
     let mut blocks: Vec<Vec<usize>> = vec![Vec::new(); n];
     for i in 0..n {
         let mut out = Vec::new();
+        let mut hits: Vec<(Option<usize>, Option<usize>)> = Vec::new();
         for r in &tickets[i].blocked_refs {
             let hit = r
                 .path
@@ -722,12 +731,27 @@ fn resolve_relations(projects: &[Project], tickets: &mut [Ticket]) {
                     let hits: Vec<usize> = (0..n).filter(|&j| !want.is_empty() && tickets[j].title.to_lowercase() == want).collect();
                     hits.iter().copied().find(same).or_else(|| hits.first().copied())
                 });
+            let project = if hit.is_none() {
+                r.path.as_ref().and_then(|p| {
+                    let p = canon(p);
+                    projects
+                        .iter()
+                        .position(|pr| canon(&pr.dir) == p || pr.docs.iter().any(|d| canon(&d.path) == p))
+                })
+            } else {
+                None
+            };
+            hits.push((hit.filter(|&j| j != i), project));
             if let Some(j) = hit
                 && j != i
                 && !out.contains(&j)
             {
                 out.push(j);
             }
+        }
+        for (r, (hit, project)) in tickets[i].blocked_refs.iter_mut().zip(hits) {
+            r.hit = hit;
+            r.project = project;
         }
         for &j in &out {
             blocks[j].push(i);
@@ -801,9 +825,11 @@ pub enum Tracker {
 /// through `docs/agents/issue-tracker.md`, else through `.scratch/`.
 pub fn locate_tracker(picked: &Path) -> Tracker {
     let scratch = picked.join(".scratch");
-    let config = std::fs::read_to_string(picked.join("docs/agents/issue-tracker.md")).unwrap_or_default();
+    let config = std::fs::read_to_string(tracker_doc(picked)).unwrap_or_default();
     let heading = config.lines().find(|l| l.starts_with("# ")).unwrap_or_default();
-    if !config.is_empty() && !heading.to_lowercase().contains("local") {
+    // A freeform "Other" tracker can still describe local markdown files.
+    let local = heading.to_lowercase().contains("local") || LOCAL_FOLDER.is_match(&config);
+    if !config.is_empty() && !local {
         // A remote tracker wins over a stray `.scratch/` folder.
         let name = heading.trim_start_matches("# ");
         let name = name.split_once(':').map_or(name, |(_, n)| n).trim();
@@ -811,9 +837,9 @@ pub fn locate_tracker(picked: &Path) -> Tracker {
         return Tracker::Remote(name);
     }
     // The local template names its folder in backticks: "files in `.scratch/`".
-    let configured = Regex::new(r"markdown files in `([^`]+)`")
-        .ok()
-        .and_then(|re| re.captures(&config).map(|c| c[1].trim_end_matches('/').to_string()))
+    let configured = LOCAL_FOLDER
+        .captures(&config)
+        .map(|c| c[1].trim_end_matches('/').to_string())
         .map(|rel| picked.join(rel))
         .filter(|p| p.is_dir());
     if let Some(dir) = configured {
@@ -828,6 +854,32 @@ pub fn locate_tracker(picked: &Path) -> Tracker {
         Tracker::Missing
     }
 }
+
+/// The tracker doc. `CLAUDE.md` or `AGENTS.md` may point to another path
+/// under its `### Issue tracker` heading.
+fn tracker_doc(repo: &Path) -> PathBuf {
+    for name in ["CLAUDE.md", "AGENTS.md"] {
+        let Ok(text) = std::fs::read_to_string(repo.join(name)) else {
+            continue;
+        };
+        let Some(at) = text.find("### Issue tracker") else {
+            continue;
+        };
+        let block = &text[at..];
+        let block = &block[..block[3..].find("\n#").map_or(block.len(), |e| e + 3)];
+        if let Some(c) = DOC_POINTER.captures(block) {
+            let p = repo.join(&c[1]);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    repo.join("docs/agents/issue-tracker.md")
+}
+
+static BRIEF_CATEGORY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\*\*Category:\*\*\s*`?([A-Za-z-]+)").unwrap());
+static LOCAL_FOLDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"markdown files (?:in|under) `([^`]+)`").unwrap());
+static DOC_POINTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+\.md)`").unwrap());
 
 /// A folder holds a local tracker: an `issues/` folder with markdown, or a
 /// `spec.md` or `map.md`, within three levels.
@@ -1125,7 +1177,8 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
                 blocked_section.push(item.to_string());
             }
         }
-        if let Some(c) = CHECK.captures(line) {
+        // A checkbox quoted in a comment is not a sub-task.
+        if let Some(c) = CHECK.captures(line).filter(|_| !in_comments) {
             checklist.push(CheckItem {
                 done: &c[2] != " ",
                 text: c[3].trim().to_string(),
@@ -1222,7 +1275,10 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
         status,
         status_derived,
         category,
-        kind: get("type").map(|s| s.to_lowercase()),
+        // Triage writes the category (bug, enhancement) in its agent brief.
+        kind: get("type")
+            .or_else(|| BRIEF_CATEGORY.captures(text).map(|c| c[1].to_string()))
+            .map(|s| s.to_lowercase()),
         props: props.clone(),
         blocked_refs,
         blocked_by: Vec::new(),
@@ -1293,7 +1349,7 @@ pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
                     let s = p.trim_start_matches(['*', '`', '[']);
                     LEAD_NUM.captures(s).and_then(|c| c[1].parse().ok())
                 });
-            RefSpec { num, path, text: p }
+            RefSpec { num, path, text: p, hit: None, project: None }
         })
         .collect()
 }
@@ -1332,14 +1388,20 @@ mod tests {
         };
         w("feat/spec.md", "# Feature\n");
         w("feat/issues/01-first.md", "# First\n\nStatus: ready-for-agent\n");
-        w("feat/issues/02-second.md", "# Second\n\n## Blocked by\n\n- First\n");
+        w("feat/issues/02-second.md", "# Second\n\n- [x] Done part\n\n## Blocked by\n\n- First\n\n## Comments\n\n- [ ] quoted, not a sub-task\n");
+        w("later/spec.md", "# Later\n");
+        w("later/issues/01-after.md", "# After\n\nBlocked by: the [feature](../../feat/spec.md)\n\nStatus: ready-for-agent\n");
         w("plans/2026-05-21-brand.md", "# Plan\n\nStatus: draft\n");
         w("adr/0001-choose-db.md", "# ADR\n\nStatus: accepted\n");
         w("research/note.md", "# Note\n\nStatus: beta\n");
         let b = Board::load(&root);
         let titles: Vec<&str> = b.tickets.iter().map(|t| t.title.as_str()).collect();
-        assert_eq!(titles, vec!["First", "Second"]);
-        assert_eq!(b.tickets[1].blocked_by, vec![0]);
+        assert_eq!(titles.len(), 3);
+        let ix = |title: &str| b.tickets.iter().position(|t| t.title == title).unwrap();
+        assert_eq!(b.tickets[ix("Second")].blocked_by, vec![ix("First")]);
+        assert_eq!(b.tickets[ix("Second")].checklist_counts(), (1, 1));
+        // A spec link blocks the ticket until that whole project is closed.
+        assert!(b.is_blocked(ix("After")));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1353,6 +1415,14 @@ mod tests {
 
         let bare = temp_repo("bare", None, true);
         assert_eq!(locate_tracker(&bare), Tracker::Local(bare.join(".scratch")));
+
+        let moved = temp_repo("moved", None, false);
+        std::fs::create_dir_all(moved.join("tickets-here")).unwrap();
+        std::fs::write(moved.join("CLAUDE.md"), "## Agent skills\n\n### Issue tracker\n\nLocal files. See `notes/tracker.md`.\n\n### Triage labels\n").unwrap();
+        std::fs::create_dir_all(moved.join("notes")).unwrap();
+        std::fs::write(moved.join("notes/tracker.md"), "# Issue tracker: ours\n\nIssues live as markdown files in `tickets-here/`.\n").unwrap();
+        assert_eq!(locate_tracker(&moved), Tracker::Local(moved.join("tickets-here")));
+        let _ = std::fs::remove_dir_all(&moved);
 
         let plain = temp_repo("plain", None, false);
         assert_eq!(locate_tracker(&plain), Tracker::Missing);

@@ -920,11 +920,7 @@ impl KuzgunApp {
         let mut blocked_rows: Vec<AnyElement> = Vec::new();
         let mut shown = Vec::new();
         for r in &tk.blocked_refs {
-            let hit = tk.blocked_by.iter().copied().find(|&j| {
-                let o = &self.board.tickets[j];
-                (r.num.is_some() && o.num == r.num && o.project == tk.project)
-                    || r.path.as_ref().is_some_and(|p| canon(p) == canon(&o.path))
-            });
+            let hit = r.hit;
             match hit {
                 Some(j) if !shown.contains(&j) => {
                     shown.push(j);
@@ -1266,6 +1262,38 @@ impl KuzgunApp {
             .gap_1()
             .child(div().text_xs().text_color(theme.muted_foreground).child("Project progress"))
             .child(progress(done, tickets.len(), &theme, light));
+        // Milestones of this project (Tranche, Phase, Sprint...), in order.
+        for f in self.board.facets.iter().filter(|f| model::is_milestone(&f.key)) {
+            let rows: Vec<(String, usize, usize)> = f
+                .values
+                .iter()
+                .map(|v| {
+                    let ids: Vec<usize> =
+                        tickets.iter().copied().filter(|&i| self.board.tickets[i].field_values(&f.key).iter().any(|x| x == v)).collect();
+                    let closed = ids.iter().filter(|&&i| self.board.tickets[i].category.is_closed()).count();
+                    (v.clone(), closed, ids.len())
+                })
+                .filter(|(_, _, n)| *n > 0)
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            col = col.child(div().mt_3().text_xs().text_color(theme.muted_foreground).child(model::field_label(&f.key)));
+            for (v, closed, n) in rows {
+                let frac = closed as f32 / n as f32;
+                let color = if closed == n { icons::status_color(Category::Done, light) } else { theme.accent };
+                col = col.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .h(px(26.))
+                        .child(icons::diamond(frac).size(px(13.)).text_color(color))
+                        .child(div().w(px(56.)).flex_none().truncate().text_sm().text_color(theme.foreground).child(v))
+                        .child(progress(closed, n, &theme, light)),
+                );
+            }
+        }
         if !frontier.is_empty() {
             col = col.child(
                 div()
@@ -1547,10 +1575,6 @@ impl KuzgunApp {
             .child(div().flex().flex_col().gap_0p5().children(events.into_iter().map(|(_, e)| e)))
             .into_any_element()
     }
-}
-
-fn canon(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
 /// `[text](url)` → `text`.
