@@ -1905,11 +1905,14 @@ impl KuzgunApp {
             }
             if blocked {
                 let open_blockers = self.idx.open_blockers.get(ix).cloned().unwrap_or_default();
+                let projects = self.blocking_projects(ix);
                 let names = open_blockers
                     .iter()
                     .map(|&b| format!("{} {}", self.board.tickets[b].key, self.board.tickets[b].title))
+                    .chain(projects.iter().map(|&p| format!("The whole {} project", self.board.projects[p].title)))
                     .collect::<Vec<_>>()
                     .join("\n");
+                let count = open_blockers.len() + projects.len();
                 marks.push(
                     div()
                         .id(("blocked", ix))
@@ -1919,7 +1922,7 @@ impl KuzgunApp {
                         .text_xs()
                         .text_color(red)
                         .child(Icon::new(IconName::Lock).size(px(12.)))
-                        .child(open_blockers.len().to_string())
+                        .child(count.to_string())
                         .tooltip(tip(format!("Blocked by\n{names}")))
                         .into_any_element(),
                 );

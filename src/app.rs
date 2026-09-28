@@ -457,6 +457,17 @@ impl KuzgunApp {
     /// - started (in-review, in-progress, claimed) with every sub-task checked: Done.
     ///
     /// `status` keeps what the file says; `inferred` says why.
+    /// Open projects a ticket waits on through a spec or map link.
+    pub fn blocking_projects(&self, ix: usize) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::new();
+        for p in self.board.tickets[ix].blocked_refs.iter().filter_map(|r| r.project) {
+            if self.board.project_open(p) && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
     /// Projects newest first, by the first commit (else file) of their
     /// oldest ticket.
     pub fn project_order(&self) -> Vec<usize> {

@@ -618,7 +618,15 @@ impl KuzgunApp {
             (icons::status_color(tk.category, light), IconName::CircleCheck, "Closed".into(), format!("{} · nothing left to do", status_label(&tk.status)))
         } else if blocked {
             let n = open_blockers.len();
-            (theme.red, IconName::Lock, "Blocked".into(), format!("Waiting on {n} open ticket{}", if n == 1 { "" } else { "s" }))
+            let projects: Vec<String> = self.blocking_projects(ix).iter().map(|&p| self.board.projects[p].title.clone()).collect();
+            let mut parts = Vec::new();
+            if n > 0 {
+                parts.push(format!("{n} open ticket{}", if n == 1 { "" } else { "s" }));
+            }
+            if !projects.is_empty() {
+                parts.push(format!("the {} project to close", projects.join(" and ")));
+            }
+            (theme.red, IconName::Lock, "Blocked".into(), format!("Waiting on {}", parts.join(" and ")))
         } else if frontier {
             (theme.green, IconName::Compass, "Ready to start".into(), "On the frontier: every blocker is closed".into())
         } else {
