@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Editor, EditorState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::theme::ActiveTheme as _;
 use gpui_kit::component::tree::{TreeItem, TreeState, tree};
@@ -47,6 +47,9 @@ pub struct FilesView {
     /// The text on screen: (path, mode, text).
     pub text: Option<(String, ViewMode, String)>,
     pub editor: Option<(String, ViewMode, Entity<EditorState>)>,
+    /// The tree's filter box, made on first render (it needs the window).
+    pub query: Option<Entity<InputState>>,
+    _query_sub: Option<Subscription>,
     _snap_task: Option<Task<()>>,
     _text_task: Option<Task<()>>,
 }
@@ -63,6 +66,8 @@ impl Default for FilesView {
             mode: ViewMode::Changes,
             text: None,
             editor: None,
+            query: None,
+            _query_sub: None,
             _snap_task: None,
             _text_task: None,
         }
@@ -76,9 +81,12 @@ struct Node {
     files: Vec<String>,
 }
 
-fn build_tree(snap: &Snapshot, changed_only: bool) -> Vec<TreeItem> {
+fn build_tree(snap: &Snapshot, changed_only: bool, query: &str) -> Vec<TreeItem> {
     let mut root = Node::default();
+    let q = query.trim().to_lowercase();
     let paths: Vec<&String> = if changed_only { snap.changes.iter().map(|c| &c.path).collect() } else { snap.files.iter().collect() };
+    let paths: Vec<&String> = paths.into_iter().filter(|p| q.is_empty() || p.to_lowercase().contains(&q)).collect();
+    let open_all = changed_only || !q.is_empty();
     for p in paths {
         let mut node = &mut root;
         let parts: Vec<&str> = p.split('/').collect();
@@ -101,7 +109,7 @@ fn build_tree(snap: &Snapshot, changed_only: bool) -> Vec<TreeItem> {
         }
         out
     }
-    items(&root, "", snap, changed_only)
+    items(&root, "", snap, open_all)
 }
 
 impl KuzgunApp {
@@ -164,7 +172,8 @@ impl KuzgunApp {
         let Some(snap) = s.files.snap.clone() else {
             return;
         };
-        let items = build_tree(&snap, s.files.changed_only);
+        let query = s.files.query.as_ref().map(|q| q.read(cx).value().to_string()).unwrap_or_default();
+        let items = build_tree(&snap, s.files.changed_only, &query);
         match &s.files.tree {
             Some(t) => t.update(cx, |t, cx| t.set_items(items, cx)),
             None => s.files.tree = Some(cx.new(|cx| TreeState::new(cx).items(items))),
@@ -275,6 +284,18 @@ impl KuzgunApp {
             let state = cx.new(|cx| EditorState::new(window, cx).language(lang).line_number(true).default_value(text));
             s.files.editor = Some((path, mode, state));
         }
+        if s.files.query.is_none() {
+            let q = cx.new(|cx| InputState::new(window, cx).placeholder("Find a file…"));
+            let sub = cx.subscribe_in(&q, window, |this, _, ev: &InputEvent, _, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    this.rebuild_tree(cx);
+                    cx.notify();
+                }
+            });
+            s.files.query = Some(q);
+            s.files._query_sub = Some(sub);
+        }
+        let query_box = s.files.query.clone();
         let status: Arc<HashMap<String, (char, usize, usize)>> =
             Arc::new(snap.changes.iter().map(|c| (c.path.clone(), (c.status, c.added, c.removed))).collect());
         let (green, red, yellow) = (theme.green, theme.red, theme.yellow);
@@ -355,6 +376,9 @@ impl KuzgunApp {
                     .border_b_1()
                     .border_color(border)
                     .child(div().text_xs().text_color(muted).truncate().child(snap.source.label()))
+                    .when_some(query_box, |d, q| {
+                        d.child(Input::new(&q).small().prefix(Icon::new(IconName::Search).size(px(13.)).text_color(muted)).cleanable(true))
+                    })
                     .child(
                         div()
                             .flex()
