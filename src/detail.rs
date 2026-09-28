@@ -684,7 +684,7 @@ impl KuzgunApp {
                         .child(format!("The file still says \"{}\": /implement does not update it.", status_label(&tk.status))),
                 );
             let wt = run.worktree.clone();
-            let transcript = run.transcript.clone();
+            let ticket_path = tk.path.clone();
             banner = banner.child(
                 div()
                     .pl(px(24.))
@@ -705,8 +705,8 @@ impl KuzgunApp {
                             .xsmall()
                             .ghost()
                             .icon(Icon::new(IconName::FileText))
-                            .label("Transcript")
-                            .on_click(move |_, _, cx| cx.reveal_path(&transcript)),
+                            .label("Agent session")
+                            .on_click(cx.listener(move |this, _, _, cx| this.open_session(ticket_path.clone(), cx))),
                     ),
             );
         } else if blocked {
@@ -1090,6 +1090,9 @@ impl KuzgunApp {
         let p4 = path.clone();
         let p5 = path.clone();
         let next = self.next_command(ix?);
+        let runs = self.runs_of(ix?);
+        let has_runs = !runs.is_empty();
+        let running = runs.iter().any(|r| r.state == crate::agents::RunState::Running);
         let prefs = crate::settings::get();
         let editor_label = if !prefs.editor_command.trim().is_empty() {
             "Open in Editor".to_string()
@@ -1107,7 +1110,38 @@ impl KuzgunApp {
                 .p_3()
                 .border_t_1()
                 .border_color(border)
-                .when_some(next, |d, (skill, cmd, why)| {
+                // A ticket an agent worked on opens its session first.
+                .when(has_runs, |d| {
+                    let p6 = p5.clone();
+                    let start = next.clone().map(|(skill, _, why)| (skill, why));
+                    let p7 = p5.clone();
+                    let term = crate::terminals::chosen().map(|t| t.name).unwrap_or_else(|| "a terminal".into());
+                    d.child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("act-session")
+                                    .primary()
+                                    .flex_1()
+                                    .icon(Icon::new(IconName::Bot))
+                                    .label(if running { "Watch agent" } else { "Agent session" })
+                                    .tooltip("Read what the agent did, step by step")
+                                    .on_click(cx.listener(move |this, _, _, cx| this.open_session(p6.clone(), cx))),
+                            )
+                            .when_some(start, |d, (skill, why)| {
+                                d.child(
+                                    Button::new("act-start")
+                                        .flex_1()
+                                        .icon(Icon::new(IconName::Play))
+                                        .label("Start agent")
+                                        .tooltip(format!("{why}: runs `claude` with /{skill} in {term}"))
+                                        .on_click(cx.listener(move |this, _, _, cx| this.start_agent(&p7, cx))),
+                                )
+                            }),
+                    )
+                })
+                .when_some(next.filter(|_| !has_runs), |d, (skill, cmd, why)| {
                     let p5 = p5.clone();
                     let term = crate::terminals::chosen().map(|t| t.name).unwrap_or_else(|| "a terminal".into());
                     d.child(

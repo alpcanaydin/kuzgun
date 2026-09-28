@@ -101,7 +101,7 @@ impl KuzgunApp {
                             .flex()
                             .flex_col()
                             .child(div().truncate().text_sm().text_color(fg).child(title))
-                            .child(div().truncate().text_xs().text_color(muted).child(r.description.clone())),
+                            .child(div().truncate().text_xs().text_color(muted).child(format!("{} · {}", r.provider.label(), r.description))),
                     )
                     .when_some(status, |d, (cat, label)| {
                         d.child(
@@ -136,7 +136,8 @@ impl KuzgunApp {
                     )
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if let Some(p) = path.clone() {
-                            this.open_detail(p, true, w, cx);
+                            this.open_detail(p.clone(), true, w, cx);
+                            this.open_session(p, cx);
                         }
                     }))
                     .into_any_element()
@@ -167,7 +168,7 @@ impl KuzgunApp {
                                     div()
                                         .text_sm()
                                         .text_color(muted)
-                                        .child("Claude Code runs on this board's tickets in the last three days, read from the session transcripts."),
+                                        .child("Claude Code and Codex runs on this board's tickets in the last three days, read from their session files."),
                                 ),
                         )
                         .child(

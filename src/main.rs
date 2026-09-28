@@ -19,12 +19,14 @@ mod menus;
 mod model;
 mod notify;
 mod palette;
+mod session;
 mod settings;
 mod store;
 mod terminals;
 mod theme;
 mod themes;
 mod toast;
+mod transcript;
 mod watch;
 
 /// Handle of the main window, for dock reopen.
@@ -73,6 +75,26 @@ fn main() {
         println!("  facets {facets:?}");
         let (checks, done): (usize, usize) = b.tickets.iter().map(|t| t.checklist_counts()).fold((0, 0), |a, (d, n)| (a.0 + n, a.1 + d));
         println!("  checkboxes {done}/{checks}, untitled {}", b.tickets.iter().filter(|t| t.title.is_empty()).count());
+        return;
+    }
+    // `kuzgun --conversation claude|codex <file>`: print a transcript summary.
+    if args.get(1).map(String::as_str) == Some("--conversation") {
+        let provider = if args.get(2).map(String::as_str) == Some("codex") { transcript::Provider::Codex } else { transcript::Provider::Claude };
+        let mut t = transcript::Transcript::default();
+        t.update(std::path::Path::new(args.get(3).map(String::as_str).unwrap_or_default()), provider);
+        let count = |k: transcript::Kind| t.entries.iter().filter(|e| e.kind == k).count();
+        println!(
+            "entries {} · prompts {} · replies {} · thinking {} · tools {} (with output {})",
+            t.entries.len(),
+            count(transcript::Kind::User),
+            count(transcript::Kind::Assistant),
+            count(transcript::Kind::Thinking),
+            count(transcript::Kind::Tool),
+            t.entries.iter().filter(|e| e.output.is_some()).count()
+        );
+        for e in t.entries.iter().filter(|e| e.kind == transcript::Kind::Tool).take(4) {
+            println!("  tool {} · {}", e.tool.clone().unwrap_or_default(), e.text);
+        }
         return;
     }
     if std::env::args().any(|a| a == "--test-notification") {
@@ -148,7 +170,11 @@ fn open_main_window(cx: &mut App, auto_open: bool) {
                 close_view.update(cx, |app, cx| app.on_close_request(window, cx))
             });
             // A path argument opens that folder; otherwise the last board.
-            let arg = std::env::args().nth(1).map(std::path::PathBuf::from);
+            // `--ticket WS-5` opens that ticket once the board loads.
+            let args: Vec<String> = std::env::args().collect();
+            let ticket = args.iter().position(|a| a == "--ticket").and_then(|i| args.get(i + 1).cloned());
+            let arg = args.get(1).filter(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
+            view.update(cx, |app, _| app.pending_ticket = ticket);
             view.update(cx, |app, cx| match arg {
                 Some(p) if p.is_dir() => {
                     let p = std::fs::canonicalize(&p).unwrap_or(p);

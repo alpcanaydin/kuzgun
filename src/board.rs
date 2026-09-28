@@ -109,7 +109,9 @@ impl KuzgunApp {
         let side = self.detail.is_some() && !full;
         let detail_w = self.view.detail_w.unwrap_or(620.);
         let sidebar = if self.view.sidebar_hidden { None } else { Some(self.render_sidebar(cx).into_any_element()) };
-        let main: AnyElement = if full {
+        let main: AnyElement = if self.session.is_some() {
+            self.render_session(cx)
+        } else if full {
             self.render_detail(window, cx).into_any_element()
         } else if self.view.page == crate::store::Page::Home {
             self.render_home(cx).into_any_element()
@@ -275,6 +277,7 @@ impl KuzgunApp {
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.view.page = crate::store::Page::Home;
                         this.detail = None;
+                        this.session = None;
                         this.save_view();
                         this.board_focus.focus(w, cx);
                         cx.notify();
@@ -287,6 +290,7 @@ impl KuzgunApp {
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.view.page = crate::store::Page::Dependencies;
                         this.detail = None;
+                        this.session = None;
                         this.save_view();
                         this.board_focus.focus(w, cx);
                         cx.notify();
@@ -300,6 +304,7 @@ impl KuzgunApp {
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.view.page = crate::store::Page::Agents;
                         this.detail = None;
+                        this.session = None;
                         this.save_view();
                         this.board_focus.focus(w, cx);
                         cx.notify();

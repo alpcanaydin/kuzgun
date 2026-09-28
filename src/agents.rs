@@ -22,6 +22,8 @@ use std::time::SystemTime;
 
 use regex::Regex;
 
+pub use crate::transcript::Provider;
+
 /// Stopped agents without a worktree count as landed work this long.
 const FINISHED_SECS: i64 = 3 * 86_400;
 
@@ -44,6 +46,7 @@ pub struct AgentRun {
     pub description: String,
     pub worktree: Option<PathBuf>,
     pub transcript: PathBuf,
+    pub provider: Provider,
     /// Unix seconds.
     pub started: i64,
     pub last_activity: i64,
@@ -54,7 +57,7 @@ static TICKET_PATH: LazyLock<Regex> =
 /// A skill run on a ticket: `<command-name>/implement</command-name>
 /// <command-args>115</command-args>`, or the same typed as plain text.
 static SKILL_CALL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)<command-name>/?(?:[\w-]+:)?([\w-]+)</command-name>.*?<command-args>(.*?)</command-args>|(?m)^/(?:[\w-]+:)?([\w-]+)[ \t]+(\S.*)$").unwrap()
+    Regex::new(r"(?s)<command-name>/?(?:[\w-]+:)?([\w-]+)</command-name>.*?<command-args>(.*?)</command-args>|(?m)^[/$](?:[\w-]+:)?([\w-]+)[ \t]+(\S.*)$").unwrap()
 });
 static TICKET_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([A-Z][A-Z0-9]{0,5}-\d{1,5})\b").unwrap());
 static TICKET_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s#])(\d{1,5})\b").unwrap());
@@ -233,6 +236,10 @@ fn user_text(v: &serde_json::Value) -> Option<String> {
 /// The last ticket a top-level session was asked about since its last
 /// `/clear`. Reads only the bytes added since the previous scan.
 fn latest_ticket(path: &Path) -> Option<(String, i64)> {
+    latest_ticket_with(path, user_text)
+}
+
+fn latest_ticket_with(path: &Path, prompt_of: fn(&serde_json::Value) -> Option<String>) -> Option<(String, i64)> {
     use std::io::{Read, Seek, SeekFrom};
     let len = std::fs::metadata(path).ok()?.len();
     let mut seen = SEEN.lock().ok()?;
@@ -254,7 +261,7 @@ fn latest_ticket(path: &Path) -> Option<(String, i64)> {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-            let Some(text) = user_text(&v) else {
+            let Some(text) = prompt_of(&v) else {
                 continue;
             };
             if text.contains("<command-name>/clear</command-name>") {
@@ -274,7 +281,7 @@ fn latest_ticket(path: &Path) -> Option<(String, i64)> {
     entry.1.clone()
 }
 
-fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64) -> Option<AgentRun> {
+fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64, max_age: i64) -> Option<AgentRun> {
     let md = std::fs::metadata(transcript).ok()?;
     let last = md.modified().map(unix).unwrap_or(0);
     let started = md.created().map(unix).unwrap_or(last);
@@ -305,7 +312,7 @@ fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64) -> Optio
         RunState::Running
     } else if worktree.is_some() {
         RunState::AwaitingReview
-    } else if now - last <= FINISHED_SECS {
+    } else if now - last <= max_age {
         RunState::Finished
     } else {
         return None;
@@ -316,19 +323,155 @@ fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64) -> Optio
         description,
         worktree,
         transcript: transcript.to_path_buf(),
+        provider: Provider::Claude,
         started,
         last_activity: last,
     })
 }
 
+/// The prompt text of a Codex user message. Context the app injects comes
+/// as tagged user messages and is not a prompt.
+fn codex_user_text(v: &serde_json::Value) -> Option<String> {
+    let p = &v["payload"];
+    if v["type"].as_str() != Some("response_item") || p["type"].as_str() != Some("message") || p["role"].as_str() != Some("user") {
+        return None;
+    }
+    let text = p["content"]
+        .as_array()?
+        .iter()
+        .filter_map(|c| c["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.trim_start().starts_with('<')).then_some(text)
+}
+
+/// Whether the last Codex turn is still open, and the time of its last
+/// event.
+fn codex_turn_state(path: &Path) -> (bool, i64) {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return (false, 0);
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = f.seek(SeekFrom::Start(len.saturating_sub(256 * 1024)));
+    let mut bytes = Vec::new();
+    if f.read_to_end(&mut bytes).is_err() {
+        return (false, 0);
+    }
+    let buf = String::from_utf8_lossy(&bytes);
+    let mut last = 0;
+    for line in buf.lines().rev() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let at = v["timestamp"]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map_or(0, |d| d.timestamp());
+        if last == 0 {
+            last = at;
+        }
+        if v["type"].as_str() == Some("event_msg") {
+            match v["payload"]["type"].as_str() {
+                Some("task_started") => return (true, last),
+                Some("task_complete" | "turn_aborted") => return (false, last),
+                _ => {}
+            }
+        }
+    }
+    (false, last)
+}
+
+/// Codex sessions of the last days whose working folder is in the repo.
+fn codex_runs(repo: &Path, now: i64, max_age: i64) -> Vec<AgentRun> {
+    let Some(root) = dirs::home_dir().map(|h| h.join(".codex/sessions")) else {
+        return Vec::new();
+    };
+    // Sessions sit in day folders: `YYYY/MM/DD`. Recent scans read only the
+    // last days; a history scan reads them all.
+    let days: Vec<PathBuf> = if max_age <= FINISHED_SECS {
+        (0..=(max_age / 86_400))
+            .map(|back| root.join((chrono::Local::now() - chrono::Duration::days(back)).format("%Y/%m/%d").to_string()))
+            .collect()
+    } else {
+        let sub = |p: &Path| -> Vec<PathBuf> {
+            std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default()
+        };
+        sub(&root).iter().flat_map(|y| sub(y)).flat_map(|m| sub(&m)).collect()
+    };
+    let mut out = Vec::new();
+    for dir in days {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().is_none_or(|x| x != "jsonl") {
+                continue;
+            }
+            let Some(cwd) = codex_cwd(&path) else {
+                continue;
+            };
+            if !cwd.starts_with(repo) {
+                continue;
+            }
+            let Some((ticket_rel, asked)) = latest_ticket_with(&path, codex_user_text) else {
+                continue;
+            };
+            let md = std::fs::metadata(&path).ok();
+            let started = md.as_ref().and_then(|m| m.created().ok()).map(unix).unwrap_or(asked);
+            let (open, said) = codex_turn_state(&path);
+            let last = if said > 0 { said } else { md.and_then(|m| m.modified().ok()).map(unix).unwrap_or(0) };
+            let state = if open && now - last <= 2 * 3600 {
+                RunState::Running
+            } else if now - last <= max_age {
+                RunState::Finished
+            } else {
+                continue;
+            };
+            out.push(AgentRun {
+                description: format!("Codex session on {ticket_rel}"),
+                ticket_rel,
+                state,
+                worktree: None,
+                transcript: path,
+                provider: Provider::Codex,
+                started: if asked > 0 { asked } else { started },
+                last_activity: last,
+            });
+        }
+    }
+    out
+}
+
+/// The working folder of a Codex session, from its first line.
+fn codex_cwd(path: &Path) -> Option<PathBuf> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(path).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(f).read_line(&mut first).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&first).ok()?;
+    v["payload"]["cwd"].as_str().map(PathBuf::from)
+}
+
 /// Agent runs that touch a ticket of this repo, newest activity first.
 /// Only transcripts written in the last three days are opened.
 pub fn scan(repo: &Path) -> Vec<AgentRun> {
+    scan_within(repo, FINISHED_SECS)
+}
+
+/// Every agent run on this repo's tickets, of any age. Heavier than
+/// [`scan`]: read once per board, for the sessions of closed tickets.
+pub fn history(repo: &Path) -> Vec<AgentRun> {
+    scan_within(repo, i64::MAX)
+}
+
+fn scan_within(repo: &Path, max_age: i64) -> Vec<AgentRun> {
     let now = unix(SystemTime::now());
     let fresh = |p: &Path| {
         std::fs::metadata(p)
             .and_then(|m| m.modified())
-            .map(|t| now - unix(t) <= FINISHED_SECS)
+            .map(|t| now - unix(t) <= max_age)
             .unwrap_or(false)
     };
     let mut runs = Vec::new();
@@ -340,7 +483,7 @@ pub fn scan(repo: &Path) -> Vec<AgentRun> {
             let p = e.path();
             if p.extension().is_some_and(|x| x == "jsonl") {
                 if fresh(&p)
-                    && let Some(r) = run_of(&p, None, now)
+                    && let Some(r) = run_of(&p, None, now, max_age)
                 {
                     runs.push(r);
                 }
@@ -357,13 +500,14 @@ pub fn scan(repo: &Path) -> Vec<AgentRun> {
                     let meta = std::fs::read_to_string(t.with_extension("meta.json"))
                         .ok()
                         .and_then(|s| serde_json::from_str(&s).ok());
-                    if let Some(r) = run_of(&t, meta, now) {
+                    if let Some(r) = run_of(&t, meta, now, max_age) {
                         runs.push(r);
                     }
                 }
             }
         }
     }
+    runs.extend(codex_runs(repo, now, max_age));
     runs.sort_by_key(|r| std::cmp::Reverse(r.last_activity));
     runs
 }

@@ -10,6 +10,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::text::TextViewState;
 use gpui_kit::component::theme::ActiveTheme as _;
 use gpui_kit::component::{Icon, Sizable as _, TitleBar};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -95,6 +96,13 @@ impl Quick {
 }
 
 /// The derived column of unstarted tickets that wait on open blockers.
+/// One agent conversation and the markdown views of its messages.
+#[derive(Default)]
+pub struct Conversation {
+    pub transcript: crate::transcript::Transcript,
+    pub md: Vec<Option<Entity<TextViewState>>>,
+}
+
 pub const WAITING: &str = "waiting-on-blockers";
 
 /// Filter keys that are not ticket fields.
@@ -155,6 +163,12 @@ pub struct KuzgunApp {
     pub live: bool,
     /// Agent runs from the Claude Code transcripts of this board's repo.
     pub agent_runs: Vec<crate::agents::AgentRun>,
+    _history_task: Option<Task<()>>,
+    /// Agent runs of any age, read once per board. Only the session page
+    /// uses them; statuses follow the recent runs alone.
+    pub history_runs: Vec<crate::agents::AgentRun>,
+    /// Agent conversations read so far, by session file.
+    pub conversations: HashMap<PathBuf, Conversation>,
     /// The board as last seen, to notify about what changed.
     snaps: HashMap<PathBuf, crate::notify::Snap>,
     _agents_task: Option<Task<()>>,
@@ -164,6 +178,12 @@ pub struct KuzgunApp {
     pub deps_scroll: ScrollHandle,
     pub deps_zoom: f32,
     pub deps_drag: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// The agent session page, when open.
+    pub session: Option<crate::session::SessionView>,
+    /// A ticket whose session page opens once its agent runs are read.
+    pub pending_session: Option<PathBuf>,
+    /// A ticket key to open once the board loads (`--ticket WS-5`).
+    pub pending_ticket: Option<String>,
     /// Why the last picked folder did not open, shown on the welcome screen.
     pub welcome_notice: Option<String>,
     /// A drag on the dependency minimap is in progress.
@@ -228,6 +248,12 @@ impl KuzgunApp {
             deps_drag: None,
             deps_mini_drag: false,
             welcome_notice: None,
+            pending_ticket: None,
+            session: None,
+            pending_session: None,
+            conversations: HashMap::new(),
+            history_runs: Vec::new(),
+            _history_task: None,
             facet_view: None,
             watcher: None,
             _watch_task: None,
@@ -360,6 +386,7 @@ impl KuzgunApp {
     pub fn close_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_view();
         self.screen = Screen::Welcome;
+        self.session = None;
         self.root = None;
         self.board = Board::default();
         self.detail = None;
@@ -426,6 +453,15 @@ impl KuzgunApp {
         let Some(repo) = self.root.as_deref().and_then(crate::agents::repo_root) else {
             return;
         };
+        self.history_runs.clear();
+        let r = repo.clone();
+        self._history_task = Some(cx.spawn(async move |this, cx| {
+            let runs = cx.background_spawn(async move { crate::agents::history(&r) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.history_runs = runs;
+                cx.notify();
+            });
+        }));
         self._agents_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 let r = repo.clone();
@@ -451,6 +487,13 @@ impl KuzgunApp {
                             d.refresh(this, cx);
                             this.detail = Some(d);
                         }
+                        cx.notify();
+                    }
+                    if let Some(p) = this.pending_session.take() {
+                        this.open_session(p, cx);
+                    }
+                    // A running agent's conversation grows between status changes.
+                    if this.refresh_conversations(cx) {
                         cx.notify();
                     }
                 });
@@ -504,6 +547,48 @@ impl KuzgunApp {
     pub fn project_finished(&self, p: usize) -> bool {
         let mut it = self.board.tickets.iter().filter(|t| t.project == p).peekable();
         it.peek().is_some() && it.all(|t| t.category.is_closed())
+    }
+
+    /// Agent runs on a ticket: running first, then by last activity.
+    pub fn runs_of(&self, ix: usize) -> Vec<crate::agents::AgentRun> {
+        let mut runs: Vec<crate::agents::AgentRun> =
+            self.agent_runs.iter().filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix)).cloned().collect();
+        for r in self.history_runs.iter().filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix)) {
+            if !runs.iter().any(|x| x.transcript == r.transcript) {
+                runs.push(r.clone());
+            }
+        }
+        // A running agent first, then the latest activity.
+        runs.sort_by_key(|r| (r.state != crate::agents::RunState::Running, std::cmp::Reverse(r.last_activity)));
+        runs
+    }
+
+    /// Reads new lines of the open ticket's agent conversations. Returns
+    /// whether any changed.
+    pub fn refresh_conversations(&mut self, cx: &mut Context<Self>) -> bool {
+        let tickets: Vec<usize> = [
+            self.session.as_ref().map(|s| s.ticket.clone()),
+            self.detail.as_ref().filter(|d| !d.is_doc).map(|d| d.path.clone()),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|p| self.board.find_path(&p))
+        .collect();
+        let mut changed = false;
+        let runs: Vec<crate::agents::AgentRun> = tickets.into_iter().flat_map(|ix| self.runs_of(ix)).collect();
+        for run in runs {
+            let c = self.conversations.entry(run.transcript.clone()).or_default();
+            if c.transcript.update(&run.transcript, run.provider) {
+                changed = true;
+                for i in c.md.len()..c.transcript.entries.len() {
+                    let e = &c.transcript.entries[i];
+                    let md = matches!(e.kind, crate::transcript::Kind::User | crate::transcript::Kind::Assistant)
+                        .then(|| cx.new(|cx| TextViewState::markdown(&e.text, cx)));
+                    c.md.push(md);
+                }
+            }
+        }
+        changed
     }
 
     /// The ticket an agent run names: a path, a key (`WS-115`) or a bare
@@ -643,6 +728,16 @@ impl KuzgunApp {
         }
         if first || real > 0 {
             self.load_ages(cx);
+        }
+        if let Some(key) = self.pending_ticket.take()
+            && let Some(t) = self.board.tickets.iter().find(|t| t.key.eq_ignore_ascii_case(&key))
+        {
+            // Opened on its agent session when it has one.
+            self.nav_back.clear();
+            self.nav_fwd.clear();
+            let path = t.path.clone();
+            self.show(path.clone(), false, true, cx);
+            self.pending_session = Some(path);
         }
         if let Some(mut d) = self.detail.take() {
             d.refresh(self, cx);
@@ -1181,6 +1276,7 @@ impl KuzgunApp {
             }
         } else {
             self.detail = Some(Detail::open(path, is_doc, full, self, cx));
+            self.refresh_conversations(cx);
         }
         cx.notify();
     }
@@ -1216,6 +1312,7 @@ impl KuzgunApp {
     /// board it filters is visible.
     pub fn show_board(&mut self) {
         self.view.page = crate::store::Page::Board;
+        self.session = None;
         if self.detail.as_ref().is_some_and(|d| d.full) {
             self.detail = None;
         }
