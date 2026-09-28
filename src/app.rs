@@ -199,6 +199,8 @@ pub struct KuzgunApp {
     pub session: Option<crate::session::SessionView>,
     /// A ticket whose session page opens once its agent runs are read.
     pub pending_session: Option<PathBuf>,
+    /// Open that session page on its Files tab (`--files`).
+    pub pending_files: bool,
     /// A ticket key to open once the board loads (`--ticket WS-5`).
     pub pending_ticket: Option<String>,
     /// Why the last picked folder did not open, shown on the welcome screen.
@@ -268,6 +270,7 @@ impl KuzgunApp {
             pending_ticket: None,
             session: None,
             pending_session: None,
+            pending_files: false,
             conversations: HashMap::new(),
             history_runs: Vec::new(),
             _history_task: None,
@@ -508,11 +511,17 @@ impl KuzgunApp {
                     }
                     if let Some(p) = this.pending_session.take() {
                         this.open_session(p, cx);
+                        if std::mem::take(&mut this.pending_files)
+                            && let Some(s) = this.session.as_mut()
+                        {
+                            s.tab = crate::session_files::Tab::Files;
+                        }
                     }
                     // A running agent's conversation grows between status changes.
                     if this.refresh_conversations(cx) {
                         cx.notify();
                     }
+                    this.refresh_files(cx);
                 });
                 if alive.is_err() {
                     return;

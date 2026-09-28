@@ -11,6 +11,7 @@ mod detail;
 mod agents_page;
 mod dock;
 mod editors;
+mod files;
 mod git;
 mod home;
 mod icons;
@@ -20,6 +21,7 @@ mod model;
 mod notify;
 mod palette;
 mod session;
+mod session_files;
 mod settings;
 mod store;
 mod terminals;
@@ -174,7 +176,11 @@ fn open_main_window(cx: &mut App, auto_open: bool) {
             let args: Vec<String> = std::env::args().collect();
             let ticket = args.iter().position(|a| a == "--ticket").and_then(|i| args.get(i + 1).cloned());
             let arg = args.get(1).filter(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
-            view.update(cx, |app, _| app.pending_ticket = ticket);
+            let files = args.iter().any(|a| a == "--files");
+            view.update(cx, |app, _| {
+                app.pending_ticket = ticket;
+                app.pending_files = files;
+            });
             view.update(cx, |app, cx| match arg {
                 Some(p) if p.is_dir() => {
                     let p = std::fs::canonicalize(&p).unwrap_or(p);

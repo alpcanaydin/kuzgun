@@ -110,7 +110,7 @@ impl KuzgunApp {
         let detail_w = self.view.detail_w.unwrap_or(620.);
         let sidebar = if self.view.sidebar_hidden { None } else { Some(self.render_sidebar(cx).into_any_element()) };
         let main: AnyElement = if self.session.is_some() {
-            self.render_session(cx)
+            self.render_session(window, cx)
         } else if full {
             self.render_detail(window, cx).into_any_element()
         } else if self.view.page == crate::store::Page::Home {

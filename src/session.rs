@@ -19,6 +19,7 @@ use gpui_kit::*;
 
 use crate::agents::{AgentRun, RunState};
 use crate::app::{KuzgunApp, ago_label, now_unix, repo_relative};
+use crate::session_files::{FilesView, Tab};
 use crate::transcript::{Entry, Kind, Provider};
 
 /// The open session page.
@@ -38,6 +39,8 @@ pub struct SessionView {
     pub bg_open: bool,
     /// Background commands whose output is open, by id.
     pub bg_shown: HashSet<String>,
+    pub tab: Tab,
+    pub files: FilesView,
 }
 
 /// A row of the story.
@@ -130,6 +133,34 @@ pub fn resume_command(run: &AgentRun) -> Option<String> {
 }
 
 impl KuzgunApp {
+    /// A path an agent wrote, relative to its worktree or the repo.
+    fn session_rel(&self, path: &str) -> String {
+        let p = std::path::Path::new(path);
+        let roots: Vec<PathBuf> = [
+            self.session.as_ref().and_then(|s| match s.files.snap.as_ref().map(|x| &x.source) {
+                Some(crate::files::Source::Tree { dir, .. }) => Some(dir.clone()),
+                _ => None,
+            }),
+            self.root.as_deref().and_then(crate::agents::repo_root),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for r in roots {
+            if let Ok(rel) = p.strip_prefix(&r) {
+                return rel.display().to_string();
+            }
+        }
+        // A worktree path: `…/.claude/worktrees/<id>/<rel>`.
+        if let Some(i) = path.find("/.claude/worktrees/") {
+            let rest = &path[i + "/.claude/worktrees/".len()..];
+            if let Some((_, rel)) = rest.split_once('/') {
+                return rel.to_string();
+            }
+        }
+        path.to_string()
+    }
+
     /// Opens the session page of a ticket, on its running (else latest) run.
     pub fn open_session(&mut self, ticket: PathBuf, cx: &mut Context<Self>) {
         let Some(ix) = self.board.find_path(&ticket) else {
@@ -149,12 +180,15 @@ impl KuzgunApp {
             seen: 0,
             bg_open: false,
             bg_shown: HashSet::new(),
+            tab: Tab::Session,
+            files: FilesView::default(),
         });
         self.refresh_conversations(cx);
+        self.load_files(cx);
         cx.notify();
     }
 
-    pub fn render_session(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_session(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(s) = self.session.as_ref() else {
             return div().into_any_element();
         };
@@ -202,7 +236,32 @@ impl KuzgunApp {
                         this.open_detail(ticket_path.clone(), true, w, cx);
                     })),
             )
-            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(fg).child(tk.title.clone()));
+            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(fg).child(tk.title.clone()))
+            .child({
+                let tab = s.tab;
+                let n = s.files.snap.as_ref().map(|x| x.changes.len());
+                let seg = |id: &'static str, label: String, t: Tab| {
+                    Button::new(id)
+                        .small()
+                        .when(tab == t, |b| b.primary())
+                        .when(tab != t, |b| b.ghost())
+                        .label(label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(s) = this.session.as_mut() {
+                                s.tab = t;
+                            }
+                            if t == Tab::Files {
+                                this.load_files(cx);
+                            }
+                            cx.notify();
+                        }))
+                };
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(seg("session-tab-story", "Session".into(), Tab::Session))
+                    .child(seg("session-tab-files", match n { Some(n) if n > 0 => format!("Files · {n} changed"), _ => "Files".into() }, Tab::Files))
+            });
 
         let cards = div().flex().flex_wrap().gap_2().children(runs.iter().enumerate().map(|(i, r)| {
             let on = run.as_ref().is_some_and(|x| x.transcript == r.transcript);
@@ -259,7 +318,9 @@ impl KuzgunApp {
                         s.follow = live;
                         s.seen = 0;
                         s.scroll.set_offset(point(px(0.), px(0.)));
+                        s.files = FilesView::default();
                     }
+                    this.load_files(cx);
                     cx.notify();
                 }))
         }));
@@ -477,6 +538,61 @@ impl KuzgunApp {
                         block = block.child(list);
                     }
                     story.push(block.into_any_element());
+                    // The files this block changed, as one card.
+                    let mut touched: Vec<(String, usize, usize)> = Vec::new();
+                    for e in &entries[from..to] {
+                        for ed in &e.edits {
+                            let name = self.session_rel(&ed.path);
+                            match touched.iter_mut().find(|t| t.0 == name) {
+                                Some(t) => {
+                                    t.1 += ed.added;
+                                    t.2 += ed.removed;
+                                }
+                                None => touched.push((name, ed.added, ed.removed)),
+                            }
+                        }
+                    }
+                    if !touched.is_empty() {
+                        let n = touched.len();
+                        story.push(
+                            div()
+                                .ml(px(18.))
+                                .flex()
+                                .flex_col()
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(border)
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .py_1p5()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(format!("{n} file{} changed", if n == 1 { "" } else { "s" })),
+                                )
+                                .children(touched.into_iter().enumerate().map(|(k, (name, a, r))| {
+                                    let pick = name.clone();
+                                    div()
+                                        .id(("touched", from * 1000 + k))
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_3()
+                                        .h(px(28.))
+                                        .border_t_1()
+                                        .border_color(border)
+                                        .cursor_pointer()
+                                        .hover(|d| d.bg(muted.opacity(0.06)))
+                                        .text_sm()
+                                        .child(Icon::new(IconName::FilePen).size(px(13.)).text_color(muted))
+                                        .child(div().flex_1().min_w_0().truncate().font_family(crate::settings::mono_font()).text_color(fg).child(name))
+                                        .child(div().text_xs().text_color(theme.green).child(format!("+{a}")))
+                                        .child(div().text_xs().text_color(theme.red).child(format!("−{r}")))
+                                        .on_click(cx.listener(move |this, _, _, cx| this.select_file(pick.clone(), false, cx)))
+                                }))
+                                .into_any_element(),
+                        );
+                    }
                 }
             }
         }
@@ -671,6 +787,42 @@ impl KuzgunApp {
         });
 
         let entries_bg_open = !background.is_empty();
+        let changed_list = s.files.snap.as_ref().filter(|x| !x.changes.is_empty()).map(|x| {
+            let theme = theme.clone();
+            div()
+                .flex()
+                .flex_col()
+                .pt_3()
+                .child(div().pb_1().text_xs().font_weight(FontWeight::MEDIUM).text_color(muted).child(format!("CHANGED FILES · {}", x.changes.len())))
+                .children(x.changes.iter().take(40).enumerate().map(|(k, c)| {
+                    let pick = c.path.clone();
+                    let color = match c.status {
+                        'A' => theme.green,
+                        'D' => theme.red,
+                        _ => theme.yellow,
+                    };
+                    div()
+                        .id(("rail-change", k))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .h(px(26.))
+                        .px_1()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .hover(|d| d.bg(muted.opacity(0.08)))
+                        .text_sm()
+                        .child(div().w(px(10.)).text_xs().font_family(crate::settings::mono_font()).text_color(color).child(c.status.to_string()))
+                        .child(div().flex_1().min_w_0().truncate().text_color(fg).child(c.path.rsplit('/').next().unwrap_or(&c.path).to_string()))
+                        .child(div().text_xs().text_color(theme.green).child(format!("+{}", c.added)))
+                        .child(div().text_xs().text_color(theme.red).child(format!("−{}", c.removed)))
+                        .tooltip({
+                            let p = c.path.clone();
+                            move |w, cx| gpui_kit::component::tooltip::Tooltip::new(p.clone()).build(w, cx)
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| this.select_file(pick.clone(), false, cx)))
+                }))
+        });
         // ---- right rail: facts and actions ----
         let rail = run.as_ref().map(|r| {
             let tools: Vec<&Entry> = entries.iter().filter(|e| e.kind == Kind::Tool).collect();
@@ -730,6 +882,7 @@ impl KuzgunApp {
                 .child(fact("Files edited", edited.len().to_string()))
                 .child(fact("Commands", ran.to_string()))
                 .when_some(worktree.clone(), |d, w| d.child(fact("Worktree", repo_relative(&w).trim_end_matches('/').to_string())))
+                .children(changed_list)
                 .child(div().h(px(12.)))
                 .child(
                     div()
@@ -787,6 +940,10 @@ impl KuzgunApp {
             s.seen = seen;
         }
         let scroll = self.session.as_ref().map(|s| s.scroll.clone()).unwrap_or_default();
+        if self.session.as_ref().is_some_and(|s| s.tab == Tab::Files) {
+            let files = self.render_files(window, cx);
+            return div().flex_1().min_w_0().min_h_0().flex().flex_col().child(header).child(files).into_any_element();
+        }
         div()
             .flex_1()
             .min_w_0()
