@@ -97,7 +97,7 @@ pub fn status_label(s: &str) -> String {
 
 const COL_GAP: f32 = 8.;
 const BOARD_PAD: f32 = 12.;
-const COLLAPSED_W: f32 = 44.;
+const HIDDEN_W: f32 = 220.;
 
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView {
     move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).max_w(px(360.)).build(window, cx)
@@ -121,6 +121,7 @@ impl KuzgunApp {
             let toolbar = self.render_toolbar(side, cx).into_any_element();
             let banner = self.render_map_banner(cx);
             let columns = self.render_columns(window, cx).into_any_element();
+            let footer = self.render_hidden_footer(cx);
             div()
                 .flex_1()
                 .min_w_0()
@@ -129,6 +130,7 @@ impl KuzgunApp {
                 .child(toolbar)
                 .children(banner)
                 .child(columns)
+                .children(footer)
                 .into_any_element()
         };
         let border = cx.theme().border;
@@ -528,6 +530,48 @@ impl KuzgunApp {
                 a.filters.remove(&key);
             })));
         }
+        let filter_groups = Rc::new(self.filter_groups());
+        let active: Rc<std::collections::BTreeMap<String, String>> = Rc::new(self.filters.clone());
+        let filter = Button::new("filter")
+            .ghost()
+            .small()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_sm()
+                    .text_color(if self.filters.is_empty() { muted } else { fg })
+                    .child(Icon::new(IconName::ListFilter).size(px(13.)))
+                    .when(!narrow, |d| d.child("Filter")),
+            )
+            .dropdown_menu(move |mut menu: PopupMenu, window, cx| {
+                for (key, values) in filter_groups.iter() {
+                    let label = model::field_label(key);
+                    let (key, values, active) = (key.clone(), values.clone(), active.clone());
+                    let sub = PopupMenu::build(window, cx, move |mut m, _, _| {
+                        for (label, value, n) in &values {
+                            let on = active.get(&key) == Some(value);
+                            let (k, v) = (key.clone(), value.clone());
+                            m = m.item(PopupMenuItem::new(format!("{label}  {n}")).checked(on).on_click(move |_, _, cx| {
+                                let (k, v) = (k.clone(), v.clone());
+                                with_app(cx, |this, cx| {
+                                    if this.filters.get(&k) == Some(&v) {
+                                        this.filters.remove(&k);
+                                    } else {
+                                        this.filters.insert(k, v);
+                                    }
+                                    this.facet_view = None;
+                                    cx.notify();
+                                });
+                            }));
+                        }
+                        m
+                    });
+                    menu = menu.item(PopupMenuItem::submenu(label, sub));
+                }
+                menu
+            });
         let swim = self.view.swimlanes;
         let layout = self.view.layout;
         let ordering = self.view.ordering;
@@ -663,7 +707,64 @@ impl KuzgunApp {
                             )
                     })),
             )
+            .child(filter)
             .child(display)
+    }
+
+    /// Filter menu entries: each key with its values, labels and counts in
+    /// the current project.
+    fn filter_groups(&self) -> Vec<(String, Vec<(String, String, usize)>)> {
+        let scope = self.project_ix();
+        let ids: Vec<usize> = (0..self.board.tickets.len())
+            .filter(|&i| scope.is_none_or(|p| self.board.tickets[i].project == p))
+            .collect();
+        let count = |f: &dyn Fn(usize) -> bool| ids.iter().filter(|&&i| f(i)).count();
+        let mut groups = Vec::new();
+
+        let mut statuses: Vec<(String, usize)> = Vec::new();
+        for &i in &ids {
+            let k = &self.board.tickets[i].status_key;
+            match statuses.iter_mut().find(|(s, _)| s == k) {
+                Some((_, n)) => *n += 1,
+                None => statuses.push((k.clone(), 1)),
+            }
+        }
+        groups.push((
+            crate::app::FILTER_STATUS.to_string(),
+            statuses.into_iter().map(|(k, n)| (status_label(&k), k, n)).collect(),
+        ));
+
+        let rel = |label: &str, n: usize| (label.to_string(), label.to_string(), n);
+        groups.push((
+            crate::app::FILTER_RELATIONS.to_string(),
+            vec![
+                rel("Blocked", count(&|i| self.idx.blocked.get(i).copied().unwrap_or(false))),
+                rel("Blocking others", count(&|i| self.idx.blocking_open.get(i).copied().unwrap_or(0) > 0)),
+                rel("No relations", count(&|i| self.board.tickets[i].blocked_by.is_empty() && self.board.tickets[i].blocks.is_empty())),
+            ],
+        ));
+
+        let modes: Vec<(String, String, usize)> = [model::Mode::Afk, model::Mode::Hitl]
+            .into_iter()
+            .map(|m| (m.label().to_string(), m.label().to_string(), count(&|i| self.idx.modes.get(i).copied().flatten() == Some(m))))
+            .filter(|(_, _, n)| *n > 0)
+            .collect();
+        if !modes.is_empty() {
+            groups.push((crate::app::FILTER_MODE.to_string(), modes));
+        }
+
+        for f in &self.board.facets {
+            let values: Vec<(String, String, usize)> = f
+                .values
+                .iter()
+                .map(|v| (v.clone(), v.clone(), count(&|i| self.board.tickets[i].field_values(&f.key).iter().any(|x| x == v))))
+                .filter(|(_, _, n)| *n > 0)
+                .collect();
+            if !values.is_empty() {
+                groups.push((f.key.clone(), values));
+            }
+        }
+        groups
     }
 
     /// Wayfinder project: the map's destination above the board.
@@ -752,15 +853,24 @@ impl KuzgunApp {
             }
             out_of_scope = out;
         }
+        // Hidden columns leave the board and gather in one strip at its end.
+        let mut hidden: Vec<(Column, usize)> = Vec::new();
         for (ci, (col, items)) in groups.into_iter().enumerate() {
-            let collapsed = self.view.collapsed.contains(&col.status);
-            total += if collapsed { COLLAPSED_W } else { width } + COL_GAP;
+            if self.view.collapsed.contains(&col.status) {
+                hidden.push((col, items.len()));
+                continue;
+            }
+            total += width + COL_GAP;
             cols.push(self.render_column(ci, col, items, cx));
         }
         // Ruled-out items close the board: they are settled, not work.
         if !out_of_scope.is_empty() {
             cols.push(self.render_note_column("out", "Out of scope", IconName::Ban, out_of_scope, cx));
             total += width + COL_GAP;
+        }
+        if !hidden.is_empty() {
+            cols.push(self.render_hidden_columns(hidden, cx));
+            total += HIDDEN_W + COL_GAP;
         }
         div()
             .id("columns")
@@ -781,6 +891,92 @@ impl KuzgunApp {
                     .p(px(BOARD_PAD))
                     .children(cols),
             )
+            .into_any_element()
+    }
+
+    /// "N tickets hidden by filters", with a way out. Views and sidebar
+    /// facets show their own results list instead.
+    fn render_hidden_footer(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.quick != Quick::All || self.active_facet().is_some() || !self.filtering(cx) {
+            return None;
+        }
+        let hidden = self.in_scope().saturating_sub(self.visible(cx).len());
+        if hidden == 0 {
+            return None;
+        }
+        let t = cx.theme();
+        let (muted, border, accent) = (t.muted_foreground, t.border, t.accent);
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .h(px(34.))
+                .border_t_1()
+                .border_color(border)
+                .text_sm()
+                .text_color(muted)
+                .child(format!("{hidden} ticket{} hidden by filters", if hidden == 1 { "" } else { "s" }))
+                .child("·")
+                .child(
+                    div()
+                        .id("clear-filters")
+                        .text_color(accent)
+                        .cursor_pointer()
+                        .hover(|d| d.underline())
+                        .child("Clear filters")
+                        .on_click(cx.listener(|this, _, w, cx| this.clear_filters(w, cx))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn render_hidden_columns(&self, hidden: Vec<(Column, usize)>, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme();
+        let (muted, fg) = (t.muted_foreground, t.foreground);
+        let light = crate::settings::is_light(cx);
+        div()
+            .flex_none()
+            .w(px(HIDDEN_W))
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_2()
+                    .h(px(34.))
+                    .text_sm()
+                    .text_color(muted)
+                    .child(Icon::new(IconName::EyeOff).size(px(14.)))
+                    .child("Hidden columns"),
+            )
+            .children(hidden.into_iter().enumerate().map(|(i, (col, n))| {
+                let status = col.status.clone();
+                div()
+                    .id(("hidden-col", i))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .h(px(32.))
+                    .rounded(px(6.))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(muted.opacity(0.1)))
+                    .child(column_icon(&col, light).size(px(14.)))
+                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(fg).child(status_label(&col.status)))
+                    .child(div().text_xs().text_color(muted).child(n.to_string()))
+                    .tooltip(tip("Show this column".to_string()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.view.collapsed.retain(|s| s != &status);
+                        this.save_view();
+                        cx.notify();
+                    }))
+            }))
             .into_any_element()
     }
 
@@ -831,7 +1027,7 @@ impl KuzgunApp {
                         .text_xs()
                         .max_w(px(420.))
                         .text_center()
-                        .child("Kuzgun looks for markdown files named NN-slug.md, files in issues/ or tickets/ folders, and files with a Status line or front matter."),
+                        .child("Kuzgun reads tickets from the issues/ folder of each feature, as mattpocock/skills writes them: .scratch/<feature>/issues/NN-slug.md."),
                 )
             })
     }
@@ -954,7 +1150,6 @@ impl KuzgunApp {
         let muted = t.muted_foreground;
         let light = crate::settings::is_light(cx);
         let width = crate::settings::get().column_width;
-        let collapsed = self.view.collapsed.contains(&col.status);
         let base = div()
             .id(("col", ci))
             .flex_none()
@@ -963,30 +1158,7 @@ impl KuzgunApp {
             .h_full()
             .rounded(px(8.))
             .bg(muted.opacity(if light { 0.06 } else { 0.045 }));
-        if collapsed {
-            let status = col.status.clone();
-            return base
-                .w(px(COLLAPSED_W))
-                .items_center()
-                .pt_2()
-                .gap_2()
-                .cursor_pointer()
-                .hover(|d| d.bg(muted.opacity(0.1)))
-                .child(
-                    icons::status_icon(col.category)
-                        .size(px(14.))
-                        .text_color(icons::status_color(col.category, light)),
-                )
-                .child(div().text_xs().text_color(muted).child(items.len().to_string()))
-                .child(Icon::new(IconName::ChevronsRight).size(px(12.)).text_color(muted))
-                .tooltip(tip(format!("{} · {} · click to expand", status_label(&col.status), items.len())))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.view.collapsed.retain(|s| s != &status);
-                    this.save_view();
-                    cx.notify();
-                }))
-                .into_any_element();
-        }
+
         let n = items.len();
         let header = self.column_header(ci, &col, n, true, cx);
         let body: AnyElement = if items.is_empty() {
