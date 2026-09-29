@@ -507,6 +507,70 @@ fn codex_runs(repo: &Path, now: i64, max_age: i64) -> Vec<AgentRun> {
     out
 }
 
+/// Sessions read so far by harness scans, kept between scans so each one
+/// reads only what a session added.
+static HARNESS_SEEN: LazyLock<Mutex<HashMap<PathBuf, crate::transcript::Transcript>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Runs of the other harnesses (Cursor, Gemini, OpenCode…): the ticket is
+/// the last one a prompt names, and a run is live while its turn is open.
+/// A harness that doesn't say whether its turn is open counts as running
+/// while its session file changes.
+fn harness_runs(repo: &Path, now: i64, max_age: i64) -> Vec<AgentRun> {
+    use crate::transcript::Kind;
+    let mut out = Vec::new();
+    let Ok(mut seen) = HARNESS_SEEN.lock() else {
+        return out;
+    };
+    for f in crate::harness::discover(repo, max_age) {
+        let t = seen.entry(f.key.clone()).or_default();
+        t.update(&f.key, f.provider);
+        let Some((i, ticket_rel)) = t
+            .entries
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, e)| e.kind == Kind::User)
+            .find_map(|(i, e)| ticket_of(&e.text).map(|r| (i, r)))
+        else {
+            continue;
+        };
+        let asked = t.entries[i].at;
+        let said = t.entries.iter().map(|e| e.at).max().unwrap_or(0);
+        let last = said.max(f.modified);
+        let running = match t.open_turn {
+            Some(open) => open && now - last <= 2 * 3600,
+            None => now - f.modified <= 90,
+        };
+        let state = if running {
+            RunState::Running
+        } else if now - last <= max_age {
+            RunState::Finished
+        } else {
+            continue;
+        };
+        let description = t.entries[i]
+            .text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .take(80)
+            .collect();
+        out.push(AgentRun {
+            ticket_rel,
+            state,
+            description,
+            worktree: None,
+            transcript: f.key,
+            provider: f.provider,
+            started: if asked > 0 { asked } else { f.modified },
+            last_activity: last,
+        });
+    }
+    out
+}
+
 /// The working folder of a Codex session, from its first line.
 fn codex_cwd(path: &Path) -> Option<PathBuf> {
     use std::io::BufRead;
@@ -571,6 +635,7 @@ fn scan_within(repo: &Path, max_age: i64) -> Vec<AgentRun> {
         }
     }
     runs.extend(codex_runs(repo, now, max_age));
+    runs.extend(harness_runs(repo, now, max_age));
     runs.sort_by_key(|r| std::cmp::Reverse(r.last_activity));
     runs
 }

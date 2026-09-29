@@ -13,6 +13,7 @@ mod dock;
 mod editors;
 mod files;
 mod git;
+mod harness;
 mod home;
 mod icons;
 mod kbd;
@@ -108,11 +109,11 @@ fn main() {
     }
     // `kuzgun --conversation claude|codex <file>`: print a transcript summary.
     if args.get(1).map(String::as_str) == Some("--conversation") {
-        let provider = if args.get(2).map(String::as_str) == Some("codex") {
-            transcript::Provider::Codex
-        } else {
-            transcript::Provider::Claude
-        };
+        let name = args.get(2).map(|s| s.to_lowercase()).unwrap_or_default();
+        let provider = transcript::Provider::ALL
+            .into_iter()
+            .find(|p| p.label().to_lowercase().starts_with(&name))
+            .unwrap_or(transcript::Provider::Claude);
         let mut t = transcript::Transcript::default();
         t.update(
             std::path::Path::new(args.get(3).map(String::as_str).unwrap_or_default()),

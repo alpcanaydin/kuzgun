@@ -1,2 +1,2 @@
-claudecode-color.svg and codex-color.svg come from LobeHub Icons (@lobehub/icons-static-svg 1.95.1), MIT license, see LICENSE.txt.
-The marks belong to Anthropic and OpenAI.
+Every harness logo here (claudecode-color, codex-color, cursor, gemini-color, opencode, kimi-color, githubcopilot, junie-color, nousresearch, amp, pi, grok, antigravity-color) comes from LobeHub Icons (@lobehub/icons-static-svg 1.95.1), MIT license, see LICENSE.txt.
+The marks belong to their owners (Anthropic, OpenAI, Anysphere, Google, SST, Moonshot AI, GitHub, JetBrains, Nous Research, Sourcegraph, xAI and the Pi authors).

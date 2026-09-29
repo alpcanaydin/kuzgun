@@ -150,6 +150,7 @@ pub fn resume_command(run: &AgentRun) -> Option<String> {
             let id = parts[parts.len().saturating_sub(5)..].join("-");
             format!("codex resume {id}")
         }
+        other => return crate::harness::resume_command(other, &run.transcript),
     })
 }
 
