@@ -20,6 +20,7 @@ mod menus;
 mod model;
 mod notify;
 mod palette;
+mod region;
 mod session;
 mod session_files;
 mod settings;

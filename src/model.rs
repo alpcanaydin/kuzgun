@@ -1344,7 +1344,9 @@ pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
     // "None" in the languages people write tickets in.
     const NONE: [&str; 14] =
         ["none", "nothing", "n/a", "-", "无", "無", "なし", "없음", "yok", "keine", "aucun", "ninguno", "nenhum", "нет"];
-    if lower.is_empty() || NONE.iter().any(|w| lower == *w || lower.starts_with(&format!("{w} ")) || lower.starts_with(&format!("{w}（")) || lower.starts_with(&format!("{w}("))) {
+    // "None", "None.", "None (…)", "None: …", "无（…）": the word, then no letter.
+    let none_word = |w: &str| lower.strip_prefix(w).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()));
+    if lower.is_empty() || NONE.iter().any(|w| none_word(w)) {
         return Vec::new();
     }
     let mut parts = Vec::new();
@@ -1538,6 +1540,8 @@ mod tests {
         assert_eq!(parse_refs("04, 22 — both shipped; this revises where 04 put the list.", Path::new("/x")).len(), 2);
         assert!(parse_refs("无（第一张票；02 / 03 依赖本票）", Path::new("/x")).is_empty());
         assert!(parse_refs("Yok", Path::new("/x")).is_empty());
+        assert!(parse_refs("None. Needs `FAL_API_KEY` and a balance of about $10.", Path::new("/x")).is_empty());
+        assert_eq!(parse_refs("Nonet 3", Path::new("/x")).len(), 1);
     }
 
     #[test]

@@ -219,6 +219,29 @@ pub fn apply(cx: &mut App) {
             colors.drag_border = c.opacity(0.65);
             colors.drop_target = c.opacity(0.2);
         }
+        // Primary buttons: the kit's hover and active tokens carry their own
+        // text color; derive them from the accent so the label stays white.
+        {
+            use gpui_kit::component::theme::ThemeToken;
+            let c = theme.colors.primary;
+            let white: Hsla = rgb(0xFFFFFF).into();
+            let shade: Hsla = if light { rgb(0x000000).into() } else { rgb(0xFFFFFF).into() };
+            let hover = c.blend(shade.opacity(0.12));
+            let active = c.blend(shade.opacity(0.22));
+            theme.colors.primary_foreground = white;
+            theme.colors.primary_hover = hover;
+            theme.colors.primary_active = active;
+            theme.tokens.primary = ThemeToken::new(white, c.into());
+            theme.tokens.primary_hover = ThemeToken::new(white, hover.into());
+            theme.tokens.primary_active = ThemeToken::new(white, active.into());
+            theme.tokens.button_primary = ThemeToken::new(white, c.into());
+            theme.tokens.button_primary_hover = ThemeToken::new(white, hover.into());
+            theme.tokens.button_primary_active = ThemeToken::new(white, active.into());
+            theme.colors.button_primary_foreground = white;
+            // Menus and selected items fill with the accent: white text.
+            theme.colors.accent_foreground = white;
+            theme.tokens.accent = ThemeToken::new(white, theme.colors.accent.into());
+        }
         // Selected grid row: the accent, unless it reads like a pending
         // change color (edited / deleted / added) — then plain blue.
         let accent = theme.colors.accent;

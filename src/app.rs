@@ -181,6 +181,8 @@ pub struct KuzgunApp {
     /// Agent runs from the Claude Code transcripts of this board's repo.
     pub agent_runs: Vec<crate::agents::AgentRun>,
     _history_task: Option<Task<()>>,
+    /// The any-age history scan has finished.
+    history_loaded: bool,
     /// Agent runs of any age, read once per board. Only the session page
     /// uses them; statuses follow the recent runs alone.
     pub history_runs: Vec<crate::agents::AgentRun>,
@@ -195,6 +197,8 @@ pub struct KuzgunApp {
     pub deps_scroll: ScrollHandle,
     pub deps_zoom: f32,
     pub deps_drag: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// The cached region views of the board window.
+    regions: Option<crate::region::Regions>,
     /// The agent session page, when open.
     pub session: Option<crate::session::SessionView>,
     /// A ticket whose session page opens once its agent runs are read.
@@ -269,11 +273,13 @@ impl KuzgunApp {
             welcome_notice: None,
             pending_ticket: None,
             session: None,
+            regions: None,
             pending_session: None,
             pending_files: false,
             conversations: HashMap::new(),
             history_runs: Vec::new(),
             _history_task: None,
+            history_loaded: false,
             facet_view: None,
             watcher: None,
             _watch_task: None,
@@ -474,11 +480,13 @@ impl KuzgunApp {
             return;
         };
         self.history_runs.clear();
+        self.history_loaded = false;
         let r = repo.clone();
         self._history_task = Some(cx.spawn(async move |this, cx| {
             let runs = cx.background_spawn(async move { crate::agents::history(&r) }).await;
             let _ = this.update(cx, |this, cx| {
                 this.history_runs = runs;
+                this.history_loaded = true;
                 cx.notify();
             });
         }));
@@ -509,7 +517,10 @@ impl KuzgunApp {
                         }
                         cx.notify();
                     }
-                    if let Some(p) = this.pending_session.take() {
+                    // An old ticket's runs come from the history scan: wait for it.
+                    let ready = this.history_loaded
+                        || this.pending_session.as_ref().and_then(|p| this.board.find_path(p)).is_some_and(|i| !this.runs_of(i).is_empty());
+                    if let Some(p) = this.pending_session.take_if(|_| ready) {
                         this.open_session(p, cx);
                         if std::mem::take(&mut this.pending_files)
                             && let Some(s) = this.session.as_mut()
@@ -575,6 +586,15 @@ impl KuzgunApp {
         it.peek().is_some() && it.all(|t| t.category.is_closed())
     }
 
+    /// The region views, made once per window.
+    pub fn regions(&mut self, cx: &mut Context<Self>) -> crate::region::Regions {
+        if self.regions.is_none() {
+            let me = cx.entity();
+            self.regions = Some(crate::region::Regions::new(&me, cx));
+        }
+        self.regions.clone().expect("regions exist")
+    }
+
     /// Agent runs on a ticket: running first, then by last activity.
     pub fn runs_of(&self, ix: usize) -> Vec<crate::agents::AgentRun> {
         let mut runs: Vec<crate::agents::AgentRun> =
@@ -604,7 +624,8 @@ impl KuzgunApp {
         let runs: Vec<crate::agents::AgentRun> = tickets.into_iter().flat_map(|ix| self.runs_of(ix)).collect();
         for run in runs {
             let c = self.conversations.entry(run.transcript.clone()).or_default();
-            for b in c.transcript.background.iter().filter(|b| !b.done) {
+            let quiet = now_unix() - run.last_activity > 2 * 3600;
+            for b in c.transcript.background.iter().filter(|b| !b.done && !quiet) {
                 let t = tail(&b.output, 30);
                 if c.tails.get(&b.id) != Some(&t) {
                     c.tails.insert(b.id.clone(), t);

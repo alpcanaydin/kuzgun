@@ -50,7 +50,11 @@ pub struct Detail {
     comments: Vec<CommentEntry>,
     pub history: Option<History>,
     pub tab: ActivityTab,
-    scroll: ScrollHandle,
+    /// The left column as a virtual list: title, blocks, activity.
+    list: ListState,
+    /// What the rows looked like at the last render, to measure again
+    /// when it changes.
+    shape: u64,
     _history_task: Option<Task<()>>,
 }
 
@@ -66,7 +70,8 @@ impl Detail {
             comments: Vec::new(),
             history: None,
             tab: ActivityTab::All,
-            scroll: ScrollHandle::new(),
+            list: ListState::new(0, ListAlignment::Top, px(800.)),
+            shape: 0,
             _history_task: None,
         };
         d.rebuild(&source, cx);
@@ -104,9 +109,13 @@ impl Detail {
         let (blocks, comments) = split_body(text, self.is_doc);
         self.blocks = blocks
             .into_iter()
-            .map(|b| match b {
-                RawBlock::Md(s) => Block::Md(cx.new(|cx| TextViewState::markdown(&s, cx))),
-                RawBlock::Checks(c) => Block::Checks(c),
+            .flat_map(|b| match b {
+                // Small pieces let the page draw only the ones on screen.
+                RawBlock::Md(s) => md_chunks(&s)
+                    .into_iter()
+                    .map(|c| Block::Md(cx.new(|cx| TextViewState::markdown(&c, cx))))
+                    .collect::<Vec<_>>(),
+                RawBlock::Checks(c) => vec![Block::Checks(c)],
             })
             .collect();
         self.comments = comments
@@ -144,6 +153,33 @@ enum RawBlock {
 
 /// The body in display blocks (without H1, front matter, panel property
 /// lines and the Comments section) and the parsed comments.
+/// Markdown cut at blank lines into paragraphs, lists, tables, headings
+/// and whole code blocks.
+fn md_chunks(md: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut fence = false;
+    for line in md.lines() {
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fence = !fence;
+        }
+        if !fence && line.trim().is_empty() {
+            if !cur.trim().is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.clear();
+            continue;
+        }
+        cur.push_str(line);
+        cur.push('\n');
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 fn split_body(text: &str, is_doc: bool) -> (Vec<RawBlock>, Vec<(String, String, String)>) {
     let (_, start) = model::front_matter(text);
     let skip: Vec<usize> = if is_doc {
@@ -271,7 +307,7 @@ pub fn md_style(cx: &App) -> TextViewStyle {
 type Theme = gpui_kit::component::theme::Theme;
 
 impl KuzgunApp {
-    pub fn render_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub fn render_detail(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let Some(d) = self.detail.as_ref() else {
             return div().into_any_element();
         };
@@ -279,45 +315,50 @@ impl KuzgunApp {
         let path = d.path.clone();
         let is_doc = d.is_doc;
         let full = d.full;
-        let scroll = d.scroll.clone();
         let ix = self.board.find_path(&path);
         let wide = full || self.view.detail_w.unwrap_or(620.) >= 860.;
 
         let header = self.detail_header(ix, &path, is_doc, full, cx).into_any_element();
-        let title: String = match ix {
-            Some(i) => self.board.tickets[i].title.clone(),
-            None => self
-                .board
-                .projects
-                .iter()
-                .flat_map(|p| p.docs.iter())
-                .find(|doc| doc.path == path)
-                .map(|doc| doc.title.clone())
-                .unwrap_or_else(|| path.file_name().unwrap_or_default().to_string_lossy().to_string()),
+        // Narrow: the properties are a row of the list instead.
+        let props_side = wide.then(|| if is_doc { self.doc_panel(&path, cx) } else { self.props_panel(ix, cx) });
+        let rows = self.detail_rows(wide, is_doc);
+        let state = self.detail.as_mut().map(|d| {
+            // Rows change height when the text, the tab or the history does.
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (rows, d.source.len(), d.tab as u8, d.comments.len(), d.history.as_ref().map(|h| h.commits.len()), wide, full).hash(&mut h);
+            self.view.folded.hash(&mut h);
+            let shape = h.finish();
+            if d.list.item_count() != rows {
+                d.list.reset(rows);
+            } else if d.shape != shape {
+                d.list.remeasure();
+            }
+            d.shape = shape;
+            d.list.clone()
+        });
+        let view = cx.entity().downgrade();
+        let left = move |pad: f32| {
+            state.clone().map(|state| {
+                list(state, move |i, window, cx| {
+                    view.update(cx, |this, cx| {
+                        let row = this.detail_row(i, rows, wide, is_doc, window, cx);
+                        div()
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .px(px(pad))
+                            .when(i == 0, |d| d.pt(px(pad)))
+                            .when(i + 1 == rows, |d| d.pb(px(pad)))
+                            .child(div().w_full().min_w_0().flex().flex_col().when(full, |d| d.max_w(px(820.))).pb_4().child(row))
+                            .into_any_element()
+                    })
+                    .unwrap_or_else(|_| div().into_any_element())
+                })
+                .size_full()
+                .into_any_element()
+            })
         };
-        let props = if is_doc { self.doc_panel(&path, cx) } else { self.props_panel(ix, cx) };
-        let body = self.detail_body(&path, window, cx);
-        let activity = (!is_doc).then(|| self.activity(ix, cx));
-        let (props_inline, props_side) = if wide { (None, Some(props)) } else { (Some(props), None) };
-
-        let main = div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .w_full()
-            .min_w_0()
-            .when(full, |d| d.max_w(px(820.)))
-            .child(
-                div()
-                    .text_size(zrem(22.))
-                    .line_height(zrem(30.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(t.foreground)
-                    .child(title),
-            )
-            .children(props_inline)
-            .child(body)
-            .children(activity);
 
         // Wide: the body scrolls, the properties column stays in place
         // (with its own scroll when it is taller than the window).
@@ -329,16 +370,7 @@ impl KuzgunApp {
                 .min_h_0()
                 .flex()
                 .flex_row()
-                .child(
-                    div()
-                        .id("detail-scroll")
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .overflow_y_scroll()
-                        .track_scroll(&scroll)
-                        .child(div().p_6().flex().justify_center().child(main)),
-                )
+                .child(div().flex_1().min_w_0().h_full().children(left(24.)))
                 .children(props_side.map(|p| {
                     div()
                         .w(px(360.))
@@ -360,14 +392,7 @@ impl KuzgunApp {
                 }))
                 .into_any_element()
         } else {
-            div()
-                .id("detail-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&scroll)
-                .child(div().p_5().child(main))
-                .into_any_element()
+            div().flex_1().min_h_0().children(left(20.)).into_any_element()
         };
         div()
             .id("detail")
@@ -381,6 +406,49 @@ impl KuzgunApp {
             .child(body)
             .children(actions_foot)
             .into_any_element()
+    }
+
+    /// Rows of the left column: the title, the properties when the page is
+    /// narrow, each body block, and the activity of a ticket.
+    fn detail_rows(&self, wide: bool, is_doc: bool) -> usize {
+        let blocks = self.detail.as_ref().map_or(0, |d| d.blocks.len());
+        1 + usize::from(!wide) + blocks + usize::from(!is_doc)
+    }
+
+    fn detail_row(&mut self, i: usize, rows: usize, wide: bool, is_doc: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(path) = self.detail.as_ref().map(|d| d.path.clone()) else {
+            return div().into_any_element();
+        };
+        let ix = if is_doc { None } else { self.board.find_path(&path) };
+        let t = cx.theme().clone();
+        if i == 0 {
+            let title: String = match ix {
+                Some(i) => self.board.tickets[i].title.clone(),
+                None => self
+                    .board
+                    .projects
+                    .iter()
+                    .flat_map(|p| p.docs.iter())
+                    .find(|doc| doc.path == path)
+                    .map(|doc| doc.title.clone())
+                    .unwrap_or_else(|| path.file_name().unwrap_or_default().to_string_lossy().to_string()),
+            };
+            return div()
+                .text_size(zrem(22.))
+                .line_height(zrem(30.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(t.foreground)
+                .child(title)
+                .into_any_element();
+        }
+        if !wide && i == 1 {
+            return if is_doc { self.doc_panel(&path, cx) } else { self.props_panel(ix, cx) };
+        }
+        if !is_doc && i + 1 == rows {
+            return self.activity(ix, cx);
+        }
+        let b = i - 1 - usize::from(!wide);
+        self.detail_block(&path, b, window, cx)
     }
 
     fn detail_header(&self, ix: Option<usize>, path: &Path, is_doc: bool, full: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1377,75 +1445,65 @@ impl KuzgunApp {
 
     // ---------- body ----------
 
-    fn detail_body(&mut self, path: &Path, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// One block of the body: a markdown piece or a run of checkboxes.
+    fn detail_block(&mut self, path: &Path, bi: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let light = crate::settings::is_light(cx);
         let Some(d) = self.detail.as_ref() else {
             return div().into_any_element();
         };
+        let Some(b) = d.blocks.get(bi) else {
+            return div().into_any_element();
+        };
         let style = md_style(cx);
         let base = path.to_path_buf();
-        let (mut total, mut done) = (0, 0);
-        for b in &d.blocks {
-            if let Block::Checks(c) = b {
-                total += c.len();
-                done += c.iter().filter(|x| x.done).count();
-            }
-        }
         let first_checks = d.blocks.iter().position(|b| matches!(b, Block::Checks(_)));
-        let mut col = div().flex().flex_col().gap_3().min_w_0().text_sm().text_color(theme.foreground);
-        for (bi, b) in d.blocks.iter().enumerate() {
-            match b {
-                Block::Md(state) => {
+        let el: AnyElement = match b {
+            Block::Md(state) => TextView::new(state)
+                .selectable(true)
+                .style(style.clone())
+                .on_link_click(move |url, _, window, cx| {
+                    let url = url.to_string();
                     let base = base.clone();
-                    col = col.child(
-                        TextView::new(state)
-                            .selectable(true)
-                            .style(style.clone())
-                            .on_link_click(move |url, _, window, cx| {
-                                let url = url.to_string();
-                                let base = base.clone();
-                                let view = cx.global::<KuzgunHandle>().0.clone();
-                                view.update(cx, |this, cx| this.follow_link(&base, &url, window, cx));
-                            }),
+                    let view = cx.global::<KuzgunHandle>().0.clone();
+                    view.update(cx, |this, cx| this.follow_link(&base, &url, window, cx));
+                })
+                .into_any_element(),
+            Block::Checks(items) => {
+                let mut list = div().flex().flex_col().my_3().rounded(px(10.)).border_1().border_color(theme.border).pb_1();
+                if Some(bi) == first_checks {
+                    let (mut total, mut done) = (0, 0);
+                    for b in &d.blocks {
+                        if let Block::Checks(c) = b {
+                            total += c.len();
+                            done += c.iter().filter(|x| x.done).count();
+                        }
+                    }
+                    list = list.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .h(px(38.))
+                            .mb_1()
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(Icon::new(IconName::ListChecks).size(px(14.)))
+                            .child("Sub-tasks")
+                            .child(div().flex_1())
+                            .child(progress(done, total, &theme, light)),
                     );
                 }
-                Block::Checks(items) => {
-                    let mut list = div()
-                        .flex()
-                        .flex_col()
-                        .my_3()
-                        .rounded(px(10.))
-                        .border_1()
-                        .border_color(theme.border)
-                        .pb_1();
-                    if Some(bi) == first_checks {
-                        list = list.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .px_3()
-                                .h(px(38.))
-                                .mb_1()
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(Icon::new(IconName::ListChecks).size(px(14.)))
-                                .child("Sub-tasks")
-                                .child(div().flex_1())
-                                .child(progress(done, total, &theme, light)),
-                        );
-                    }
-                    for item in items {
-                        list = list.child(check_row(item, &theme, &style));
-                    }
-                    col = col.child(list);
+                for item in items {
+                    list = list.child(check_row(item, &theme, &style));
                 }
+                list.into_any_element()
             }
-        }
-        col.into_any_element()
+        };
+        div().min_w_0().flex().flex_col().text_sm().text_color(theme.foreground).child(el).into_any_element()
     }
 
     // ---------- activity ----------

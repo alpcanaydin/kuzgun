@@ -104,12 +104,30 @@ fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView {
 }
 
 impl KuzgunApp {
-    pub fn render_board(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// Draws one region of the board window (see `region.rs`).
+    pub fn render_region(&mut self, kind: crate::region::RegionKind, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        use crate::region::RegionKind;
+        let fill = |e: AnyElement| div().size_full().flex().child(e).into_any_element();
+        match kind {
+            RegionKind::Sidebar => fill(self.render_sidebar(cx).into_any_element()),
+            RegionKind::Main => fill(self.render_main(window, cx)),
+            RegionKind::Detail => {
+                let side = self.detail.as_ref().is_some_and(|d| !d.full);
+                fill(if side { self.render_detail(window, cx).into_any_element() } else { div().into_any_element() })
+            }
+            RegionKind::Pill => div()
+                .size_full()
+                .relative()
+                .children(if self.session.is_some() { self.render_session_pill(cx) } else { None })
+                .into_any_element(),
+        }
+    }
+
+    /// The main area: the session page, the full detail, a page or the board.
+    fn render_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let full = self.detail.as_ref().is_some_and(|d| d.full);
         let side = self.detail.is_some() && !full;
-        let detail_w = self.view.detail_w.unwrap_or(620.);
-        let sidebar = if self.view.sidebar_hidden { None } else { Some(self.render_sidebar(cx).into_any_element()) };
-        let main: AnyElement = if self.session.is_some() {
+        if self.session.is_some() {
             self.render_session(window, cx)
         } else if full {
             self.render_detail(window, cx).into_any_element()
@@ -134,9 +152,30 @@ impl KuzgunApp {
                 .child(columns)
                 .children(footer)
                 .into_any_element()
-        };
+        }
+    }
+
+    pub fn render_board(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let _ = window;
+        let full = self.detail.as_ref().is_some_and(|d| d.full);
+        let side = self.detail.is_some() && !full;
+        let detail_w = self.view.detail_w.unwrap_or(620.);
+        let regions = self.regions(cx);
+        let sidebar = (!self.view.sidebar_hidden)
+            .then(|| regions.sidebar.clone().cached(StyleRefinement::default().w(px(236.)).flex_none().h_full()).into_any_element());
+        let main = div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .relative()
+            .flex()
+            .child(regions.main.clone().cached(StyleRefinement::default().flex_1().min_w_0().min_h_0().h_full()))
+            .when(self.session.is_some(), |d| {
+                d.child(regions.pill.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full()))
+            });
+
         let border = cx.theme().border;
-        let detail = if side { Some(self.render_detail(window, cx).into_any_element()) } else { None };
+        let detail = side.then(|| regions.detail.clone().cached(StyleRefinement::default().size_full()).into_any_element());
         div()
             .id("board")
             .key_context(BOARD)
