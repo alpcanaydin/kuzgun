@@ -67,6 +67,17 @@ jobs:
           # zizmor runs its online audits with a token.
           GH_TOKEN: ${{ github.token }}
 
+      # A script that isn't executable in git fails only when a workflow
+      # runs it, which for the release scripts is release day.
+      - name: Scripts are executable
+        if: ${{ !cancelled() }}
+        run: |
+          bad=$(git ls-files -s -- '*.sh' | awk '$1 != "100755" { print $4 }')
+          if [ -n "$bad" ]; then
+            echo "::error::not executable in git (git update-index --chmod=+x): $bad"
+            exit 1
+          fi
+
       - name: Shell scripts
         if: ${{ !cancelled() }}
         run: mise exec -- shellcheck --severity=warning scripts/*.sh .github/scripts/*.sh

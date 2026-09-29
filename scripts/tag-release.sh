@@ -9,6 +9,13 @@ version="${1:?usage: scripts/tag-release.sh <version, e.g. 0.2.0>}"
 [ -z "$(git status --porcelain)" ] || { echo "tag-release: commit or stash your changes first" >&2; exit 1; }
 [ "$(git branch --show-current)" = main ] || { echo "tag-release: releases are cut from main" >&2; exit 1; }
 git pull --ff-only -q
+# Everything a release runs has to be executable in git.
+bad=$(git ls-files -s -- '*.sh' | awk '$1 != "100755" { print $4 }')
+[ -z "$bad" ] || { echo "tag-release: not executable in git: $bad" >&2; exit 1; }
+# Release only a commit whose CI passed.
+head=$(git rev-parse HEAD)
+gate=$(gh api "repos/{owner}/{repo}/commits/$head/check-runs?check_name=gate" -q '.check_runs[0].conclusion // "missing"')
+[ "$gate" = success ] || { echo "tag-release: CI gate on $(git rev-parse --short HEAD) is $gate; wait for a green run first" >&2; exit 1; }
 sed -i '' "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
 cargo update -p kuzgun --offline -q 2>/dev/null || cargo update -p kuzgun -q
 git add Cargo.toml Cargo.lock
