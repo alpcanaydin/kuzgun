@@ -3640,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "kuzgun"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
