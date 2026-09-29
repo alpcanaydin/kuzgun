@@ -20,7 +20,11 @@ pub struct Snap {
     pub hitl: bool,
 }
 
-pub fn snapshot(board: &Board, frontier: &[bool], modes: &[Option<Mode>]) -> HashMap<PathBuf, Snap> {
+pub fn snapshot(
+    board: &Board,
+    frontier: &[bool],
+    modes: &[Option<Mode>],
+) -> HashMap<PathBuf, Snap> {
     board
         .tickets
         .iter()
@@ -42,7 +46,10 @@ pub fn snapshot(board: &Board, frontier: &[bool], modes: &[Option<Mode>]) -> Has
 }
 
 /// (title, body) for each change worth a notification, per the settings.
-pub fn changes(old: &HashMap<PathBuf, Snap>, new: &HashMap<PathBuf, Snap>) -> Vec<(String, String)> {
+pub fn changes(
+    old: &HashMap<PathBuf, Snap>,
+    new: &HashMap<PathBuf, Snap>,
+) -> Vec<(String, String)> {
     let p = crate::settings::get();
     let mut out = Vec::new();
     for (path, n) in new {
@@ -51,11 +58,18 @@ pub fn changes(old: &HashMap<PathBuf, Snap>, new: &HashMap<PathBuf, Snap>) -> Ve
         };
         let name = format!("{} {}", n.key, n.title);
         match (o.agent, n.agent) {
-            (Some(RunState::Running), Some(RunState::AwaitingReview | RunState::Finished)) if p.notify_agent_done => {
-                out.push(("An agent finished".into(), format!("{name} is ready for review.")));
+            (Some(RunState::Running), Some(RunState::AwaitingReview | RunState::Finished))
+                if p.notify_agent_done =>
+            {
+                out.push((
+                    "An agent finished".into(),
+                    format!("{name} is ready for review."),
+                ));
                 continue;
             }
-            (None | Some(RunState::Finished), Some(RunState::Running)) if p.notify_agent_started => {
+            (None | Some(RunState::Finished), Some(RunState::Running))
+                if p.notify_agent_started =>
+            {
                 out.push(("An agent started".into(), format!("Working on {name}.")));
                 continue;
             }
@@ -65,9 +79,15 @@ pub fn changes(old: &HashMap<PathBuf, Snap>, new: &HashMap<PathBuf, Snap>) -> Ve
             out.push((format!("{} {}", n.key, n.category.label()), n.title.clone()));
         } else if !o.frontier && n.frontier {
             if n.hitl && p.notify_needs_you {
-                out.push(("Needs you".into(), format!("{name} can start, and it needs a person.")));
+                out.push((
+                    "Needs you".into(),
+                    format!("{name} can start, and it needs a person."),
+                ));
             } else if p.notify_unblocked {
-                out.push(("Ready to start".into(), format!("{name}: its last blocker closed.")));
+                out.push((
+                    "Ready to start".into(),
+                    format!("{name}: its last blocker closed."),
+                ));
             }
         }
     }
@@ -80,11 +100,23 @@ pub fn post(items: Vec<(String, String)>) {
         return;
     }
     let (title, body) = if items.len() > 3 {
-        (format!("{} tickets changed", items.len()), items.iter().map(|(t, b)| format!("{t}: {b}")).take(4).collect::<Vec<_>>().join("\n"))
+        (
+            format!("{} tickets changed", items.len()),
+            items
+                .iter()
+                .map(|(t, b)| format!("{t}: {b}"))
+                .take(4)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
     } else {
         items[0].clone()
     };
-    let rest: Vec<(String, String)> = if items.len() > 3 { Vec::new() } else { items[1..].to_vec() };
+    let rest: Vec<(String, String)> = if items.len() > 3 {
+        Vec::new()
+    } else {
+        items[1..].to_vec()
+    };
     std::thread::spawn(move || {
         for (t, b) in std::iter::once((title, body)).chain(rest) {
             if let Err(e) = send(&t, &b) {
@@ -128,8 +160,8 @@ mod mac {
     use objc2::runtime::Bool;
     use objc2_foundation::{NSError, NSString};
     use objc2_user_notifications::{
-        UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest, UNNotificationSound,
-        UNUserNotificationCenter,
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
+        UNNotificationSound, UNUserNotificationCenter,
     };
 
     static ASK: Once = Once::new();
@@ -141,7 +173,9 @@ mod mac {
             let center = UNUserNotificationCenter::currentNotificationCenter();
             let done = RcBlock::new(|granted: Bool, err: *mut NSError| {
                 if !granted.as_bool() {
-                    let why = unsafe { err.as_ref() }.map(|e| e.localizedDescription().to_string()).unwrap_or_default();
+                    let why = unsafe { err.as_ref() }
+                        .map(|e| e.localizedDescription().to_string())
+                        .unwrap_or_default();
                     log::warn!("notifications not allowed {why}");
                 }
             });
@@ -160,15 +194,20 @@ mod mac {
         content.setSound(Some(&UNNotificationSound::defaultSound()));
         let id = NSString::from_str(&format!(
             "kuzgun-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
         ));
-        let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
+        let request =
+            UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
         let done = RcBlock::new(|err: *mut NSError| {
             if let Some(e) = unsafe { err.as_ref() } {
                 log::warn!("notification failed: {}", e.localizedDescription());
             }
         });
-        UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, Some(&done));
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&request, Some(&done));
         Ok(())
     }
 }

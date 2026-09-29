@@ -29,7 +29,12 @@ impl KuzgunApp {
         let now = now_unix();
 
         let mut runs = self.agent_runs.clone();
-        runs.sort_by_key(|r| (r.state != RunState::Running, std::cmp::Reverse(r.last_activity)));
+        runs.sort_by_key(|r| {
+            (
+                r.state != RunState::Running,
+                std::cmp::Reverse(r.last_activity),
+            )
+        });
         let running = runs.iter().filter(|r| r.state == RunState::Running).count();
         let today = runs.iter().filter(|r| now - r.started <= 86_400).count();
         let mut durations: Vec<i64> = runs
@@ -52,7 +57,13 @@ impl KuzgunApp {
                 .border_color(border)
                 .min_w(px(150.))
                 .child(div().text_xs().text_color(muted).child(label.to_string()))
-                .child(div().text_size(px(20.)).font_weight(FontWeight::SEMIBOLD).text_color(fg).child(value))
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(fg)
+                        .child(value),
+                )
         };
 
         let rows: Vec<AnyElement> = runs
@@ -68,7 +79,11 @@ impl KuzgunApp {
                 let (key, title, status) = ticket
                     .map(|i| {
                         let tk = &self.board.tickets[i];
-                        (tk.key.clone(), tk.title.clone(), Some((tk.category, status_label(&tk.status_key))))
+                        (
+                            tk.key.clone(),
+                            tk.title.clone(),
+                            Some((tk.category, status_label(&tk.status_key))),
+                        )
                     })
                     .unwrap_or_else(|| (String::new(), r.ticket_rel.clone(), None));
                 let path = ticket.map(|i| self.board.tickets[i].path.clone());
@@ -94,7 +109,15 @@ impl KuzgunApp {
                             .child(div().text_sm().text_color(fg).child(state_label)),
                     )
                     .child(crate::icons::harness_logo(r.provider, 18.))
-                    .child(div().w(px(64.)).flex_none().text_xs().font_family(crate::settings::mono_font()).text_color(muted).child(key))
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .flex_none()
+                            .text_xs()
+                            .font_family(crate::settings::mono_font())
+                            .text_color(muted)
+                            .child(key),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -102,7 +125,13 @@ impl KuzgunApp {
                             .flex()
                             .flex_col()
                             .child(div().truncate().text_sm().text_color(fg).child(title))
-                            .child(div().truncate().text_xs().text_color(muted).child(r.description.clone())),
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(r.description.clone()),
+                            ),
                     )
                     .when_some(status, |d, (cat, label)| {
                         d.child(
@@ -114,27 +143,49 @@ impl KuzgunApp {
                                 .w(px(130.))
                                 .text_xs()
                                 .text_color(muted)
-                                .child(icons::status_icon(cat).size(px(12.)).text_color(icons::status_color(cat, light)))
+                                .child(
+                                    icons::status_icon(cat)
+                                        .size(px(12.))
+                                        .text_color(icons::status_color(cat, light)),
+                                )
                                 .child(label),
                         )
                     })
-                    .child(div().w(px(90.)).flex_none().text_xs().text_color(muted).child(format!("ran {}", duration(r.last_activity - r.started))))
-                    .child(div().w(px(90.)).flex_none().text_xs().text_color(muted).child(ago_label(now - r.last_activity)))
                     .child(
                         div()
-                            .w(px(28.))
+                            .w(px(90.))
                             .flex_none()
-                            .when_some(worktree, |d, w| {
-                                d.child(
-                                    div()
-                                        .id(("run-wt", n))
-                                        .child(Icon::new(IconName::FolderGit2).size(px(14.)).text_color(muted))
-                                        .tooltip(move |window, cx| {
-                                            gpui_kit::component::tooltip::Tooltip::new(format!("Worktree: {}", repo_relative(&w).trim_end_matches('/'))).max_w(px(360.)).build(window, cx)
-                                        }),
-                                )
-                            }),
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("ran {}", duration(r.last_activity - r.started))),
                     )
+                    .child(
+                        div()
+                            .w(px(90.))
+                            .flex_none()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(ago_label(now - r.last_activity)),
+                    )
+                    .child(div().w(px(28.)).flex_none().when_some(worktree, |d, w| {
+                        d.child(
+                            div()
+                                .id(("run-wt", n))
+                                .child(
+                                    Icon::new(IconName::FolderGit2)
+                                        .size(px(14.))
+                                        .text_color(muted),
+                                )
+                                .tooltip(move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(format!(
+                                        "Worktree: {}",
+                                        repo_relative(&w).trim_end_matches('/')
+                                    ))
+                                    .max_w(px(360.))
+                                    .build(window, cx)
+                                }),
+                        )
+                    }))
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if let Some(p) = path.clone() {
                             this.open_detail(p.clone(), true, w, cx);

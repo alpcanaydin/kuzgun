@@ -24,9 +24,7 @@ pub fn watch(root: &Path) -> notify::Result<(BoardWatcher, UnboundedReceiver<Vec
             return;
         }
         for p in ev.paths {
-            let md = p
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+            let md = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
             // A folder event (rename / delete of a directory) reloads too.
             if md || p.extension().is_none() {
                 let _ = raw_tx.send(p);

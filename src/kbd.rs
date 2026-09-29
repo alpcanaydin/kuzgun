@@ -17,7 +17,10 @@ fn caps_styled(keys: &str, color: Option<Hsla>, size: Pixels) -> AnyElement {
         .split_whitespace()
         .filter_map(|k| Keystroke::parse(k).ok())
         .map(|k| {
-            let kbd = Kbd::new(k).outline().font_family(".SystemUIFont").text_size(size);
+            let kbd = Kbd::new(k)
+                .outline()
+                .font_family(".SystemUIFont")
+                .text_size(size);
             match color {
                 Some(c) => kbd
                     .text_color(c)
@@ -26,6 +29,10 @@ fn caps_styled(keys: &str, color: Option<Hsla>, size: Pixels) -> AnyElement {
                 None => kbd,
             }
         });
-    div().flex().flex_none().gap_1().children(caps).into_any_element()
+    div()
+        .flex()
+        .flex_none()
+        .gap_1()
+        .children(caps)
+        .into_any_element()
 }
-

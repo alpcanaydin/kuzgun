@@ -36,14 +36,18 @@ pub struct History {
     pub status_since: Option<i64>,
 }
 
-static STATUS_LINE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:\*\*Status:?\*\*:?|Status:|status:)\s*(.+?)\s*$").unwrap()
-});
+static STATUS_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:\*\*Status:?\*\*:?|Status:|status:)\s*(.+?)\s*$").unwrap());
 static CHECK_LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*[-*+] \[( |x|X)\] (.*)$").unwrap());
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())
@@ -58,8 +62,11 @@ pub fn history(path: &Path) -> History {
     }
     let file = path.to_string_lossy().to_string();
     let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string());
-    let worktree = git(dir, &["status", "--porcelain", "--", &file])
-        .and_then(|s| s.lines().next().map(|l| l.chars().take(2).collect::<String>()));
+    let worktree = git(dir, &["status", "--porcelain", "--", &file]).and_then(|s| {
+        s.lines()
+            .next()
+            .map(|l| l.chars().take(2).collect::<String>())
+    });
     let log = git(
         dir,
         &[
@@ -148,7 +155,6 @@ pub fn history(path: &Path) -> History {
     }
 }
 
-
 /// What git knows about one ticket file.
 #[derive(Clone, Debug, Default)]
 pub struct FileGit {
@@ -177,7 +183,16 @@ pub fn board_ages(root: &Path) -> std::collections::HashMap<std::path::PathBuf, 
     let top = std::path::PathBuf::from(top.trim());
     let Some(log) = git(
         root,
-        &["log", "-p", "-U0", "--no-color", "--no-renames", "--format=\u{1e}%at\u{1f}%an", "--", "."],
+        &[
+            "log",
+            "-p",
+            "-U0",
+            "--no-color",
+            "--no-renames",
+            "--format=\u{1e}%at\u{1f}%an",
+            "--",
+            ".",
+        ],
     ) else {
         return out;
     };
@@ -188,7 +203,8 @@ pub fn board_ages(root: &Path) -> std::collections::HashMap<std::path::PathBuf, 
     let mut last: HashMap<std::path::PathBuf, i64> = HashMap::new();
     let mut doers: HashMap<std::path::PathBuf, Vec<(String, usize)>> = HashMap::new();
     let mut all: HashMap<std::path::PathBuf, Vec<(String, usize)>> = HashMap::new();
-    let bump = |v: &mut Vec<(String, usize)>, who: &str| match v.iter_mut().find(|(n, _)| n == who) {
+    let bump = |v: &mut Vec<(String, usize)>, who: &str| match v.iter_mut().find(|(n, _)| n == who)
+    {
         Some(e) => e.1 += 1,
         None => v.push((who.to_string(), 1)),
     };

@@ -52,18 +52,31 @@ pub struct AgentRun {
     pub last_activity: i64,
 }
 
-static TICKET_PATH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"((?:\.scratch|[A-Za-z0-9_.-]+)/[A-Za-z0-9_./-]*?issues/[A-Za-z0-9_.-]+\.md)").unwrap());
+static TICKET_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"((?:\.scratch|[A-Za-z0-9_.-]+)/[A-Za-z0-9_./-]*?issues/[A-Za-z0-9_.-]+\.md)")
+        .unwrap()
+});
 /// A skill run on a ticket: `<command-name>/implement</command-name>
 /// <command-args>115</command-args>`, or the same typed as plain text.
 static SKILL_CALL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?s)<command-name>/?(?:[\w-]+:)?([\w-]+)</command-name>.*?<command-args>(.*?)</command-args>|(?m)^[/$](?:[\w-]+:)?([\w-]+)[ \t]+(\S.*)$").unwrap()
 });
-static TICKET_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b([A-Z][A-Z0-9]{0,5}-\d{1,5})\b").unwrap());
-static TICKET_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s#])(\d{1,5})\b").unwrap());
+static TICKET_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([A-Z][A-Z0-9]{0,5}-\d{1,5})\b").unwrap());
+static TICKET_NUM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[\s#])(\d{1,5})\b").unwrap());
 /// Skills that work on one ticket.
-const TICKET_SKILLS: [&str; 9] =
-    ["implement", "implement-spec", "wayfinder", "triage", "tdd", "diagnosing-bugs", "prototype", "research", "code-review"];
+const TICKET_SKILLS: [&str; 9] = [
+    "implement",
+    "implement-spec",
+    "wayfinder",
+    "triage",
+    "tdd",
+    "diagnosing-bugs",
+    "prototype",
+    "research",
+    "code-review",
+];
 static NAMED_TICKET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:implement|ticket|work on|resolve|claim)\W{0,20}`?(\.scratch/[A-Za-z0-9_./-]+?\.md)").unwrap()
 });
@@ -108,7 +121,9 @@ pub fn transcript_dirs(repo: &Path) -> Vec<PathBuf> {
 }
 
 pub fn unix(t: SystemTime) -> i64 {
-    t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// The first user prompt of a transcript (its task), from the file head.
@@ -171,10 +186,16 @@ fn turn_state(path: &Path) -> (bool, i64) {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        match (v.get("type").and_then(|t| t.as_str()), v.get("subtype").and_then(|t| t.as_str())) {
+        match (
+            v.get("type").and_then(|t| t.as_str()),
+            v.get("subtype").and_then(|t| t.as_str()),
+        ) {
             (Some("system"), Some("turn_duration")) => return (false, at(&v)),
             (Some("assistant"), _) => {
-                let open = !matches!(v["message"]["stop_reason"].as_str(), Some("end_turn" | "stop_sequence"));
+                let open = !matches!(
+                    v["message"]["stop_reason"].as_str(),
+                    Some("end_turn" | "stop_sequence")
+                );
                 return (open, at(&v));
             }
             (Some("user"), _) => {
@@ -216,7 +237,9 @@ type Seen = (u64, Option<(String, i64)>);
 static SEEN: LazyLock<Mutex<HashMap<PathBuf, Seen>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn user_text(v: &serde_json::Value) -> Option<String> {
-    if v.get("type").and_then(|t| t.as_str()) != Some("user") || v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+    if v.get("type").and_then(|t| t.as_str()) != Some("user")
+        || v.get("isMeta").and_then(|m| m.as_bool()) == Some(true)
+    {
         return None;
     }
     match &v["message"]["content"] {
@@ -239,7 +262,10 @@ fn latest_ticket(path: &Path) -> Option<(String, i64)> {
     latest_ticket_with(path, user_text)
 }
 
-fn latest_ticket_with(path: &Path, prompt_of: fn(&serde_json::Value) -> Option<String>) -> Option<(String, i64)> {
+fn latest_ticket_with(
+    path: &Path,
+    prompt_of: fn(&serde_json::Value) -> Option<String>,
+) -> Option<(String, i64)> {
     use std::io::{Read, Seek, SeekFrom};
     let len = std::fs::metadata(path).ok()?.len();
     let mut seen = SEEN.lock().ok()?;
@@ -281,7 +307,12 @@ fn latest_ticket_with(path: &Path, prompt_of: fn(&serde_json::Value) -> Option<S
     entry.1.clone()
 }
 
-fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64, max_age: i64) -> Option<AgentRun> {
+fn run_of(
+    transcript: &Path,
+    meta: Option<serde_json::Value>,
+    now: i64,
+    max_age: i64,
+) -> Option<AgentRun> {
     let md = std::fs::metadata(transcript).ok()?;
     let last = md.modified().map(unix).unwrap_or(0);
     let started = md.created().map(unix).unwrap_or(last);
@@ -291,7 +322,11 @@ fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64, max_age:
         (prompt, t, started)
     } else {
         let (t, at) = latest_ticket(transcript)?;
-        (format!("Session on {t}"), t, if at > 0 { at } else { started })
+        (
+            format!("Session on {t}"),
+            t,
+            if at > 0 { at } else { started },
+        )
     };
     let worktree = meta
         .as_ref()
@@ -333,7 +368,10 @@ fn run_of(transcript: &Path, meta: Option<serde_json::Value>, now: i64, max_age:
 /// as tagged user messages and is not a prompt.
 fn codex_user_text(v: &serde_json::Value) -> Option<String> {
     let p = &v["payload"];
-    if v["type"].as_str() != Some("response_item") || p["type"].as_str() != Some("message") || p["role"].as_str() != Some("user") {
+    if v["type"].as_str() != Some("response_item")
+        || p["type"].as_str() != Some("message")
+        || p["role"].as_str() != Some("user")
+    {
         return None;
     }
     let text = p["content"]
@@ -391,13 +429,30 @@ fn codex_runs(repo: &Path, now: i64, max_age: i64) -> Vec<AgentRun> {
     // last days; a history scan reads them all.
     let days: Vec<PathBuf> = if max_age <= FINISHED_SECS {
         (0..=(max_age / 86_400))
-            .map(|back| root.join((chrono::Local::now() - chrono::Duration::days(back)).format("%Y/%m/%d").to_string()))
+            .map(|back| {
+                root.join(
+                    (chrono::Local::now() - chrono::Duration::days(back))
+                        .format("%Y/%m/%d")
+                        .to_string(),
+                )
+            })
             .collect()
     } else {
         let sub = |p: &Path| -> Vec<PathBuf> {
-            std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default()
+            std::fs::read_dir(p)
+                .map(|rd| {
+                    rd.flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.is_dir())
+                        .collect()
+                })
+                .unwrap_or_default()
         };
-        sub(&root).iter().flat_map(|y| sub(y)).flat_map(|m| sub(&m)).collect()
+        sub(&root)
+            .iter()
+            .flat_map(|y| sub(y))
+            .flat_map(|m| sub(&m))
+            .collect()
     };
     let mut out = Vec::new();
     for dir in days {
@@ -419,9 +474,17 @@ fn codex_runs(repo: &Path, now: i64, max_age: i64) -> Vec<AgentRun> {
                 continue;
             };
             let md = std::fs::metadata(&path).ok();
-            let started = md.as_ref().and_then(|m| m.created().ok()).map(unix).unwrap_or(asked);
+            let started = md
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .map(unix)
+                .unwrap_or(asked);
             let (open, said) = codex_turn_state(&path);
-            let last = if said > 0 { said } else { md.and_then(|m| m.modified().ok()).map(unix).unwrap_or(0) };
+            let last = if said > 0 {
+                said
+            } else {
+                md.and_then(|m| m.modified().ok()).map(unix).unwrap_or(0)
+            };
             let state = if open && now - last <= 2 * 3600 {
                 RunState::Running
             } else if now - last <= max_age {
@@ -519,8 +582,14 @@ mod tests {
     #[test]
     fn names_the_implemented_ticket() {
         let p = "You work in the They repo. Implement ticket `.scratch/walking-skeleton/issues/111-demo-seed.md` end to end. See `.scratch/product-v2/issues/62-handover.md`.";
-        assert_eq!(ticket_of(p).as_deref(), Some(".scratch/walking-skeleton/issues/111-demo-seed.md"));
-        assert_eq!(ticket_of("/implement .scratch/x/issues/05-a.md").as_deref(), Some(".scratch/x/issues/05-a.md"));
+        assert_eq!(
+            ticket_of(p).as_deref(),
+            Some(".scratch/walking-skeleton/issues/111-demo-seed.md")
+        );
+        assert_eq!(
+            ticket_of("/implement .scratch/x/issues/05-a.md").as_deref(),
+            Some(".scratch/x/issues/05-a.md")
+        );
         assert_eq!(ticket_of("hello"), None);
         assert_eq!(
             ticket_of("<command-message>implement</command-message> <command-name>/implement</command-name> <command-args>115</command-args>").as_deref(),
@@ -533,7 +602,9 @@ mod tests {
     #[test]
     fn reads_the_turn_state() {
         let path = std::env::temp_dir().join(format!("kuzgun-turn-{}.jsonl", std::process::id()));
-        let entry = |kind: &str, extra: &str| format!("{{\"type\":\"{kind}\",\"timestamp\":\"2026-09-28T20:00:00Z\"{extra}}}\n");
+        let entry = |kind: &str, extra: &str| {
+            format!("{{\"type\":\"{kind}\",\"timestamp\":\"2026-09-28T20:00:00Z\"{extra}}}\n")
+        };
         let open = entry("user", ",\"message\":{\"content\":\"go\"}")
             + &entry("assistant", ",\"message\":{\"stop_reason\":\"tool_use\"}");
         std::fs::write(&path, &open).unwrap();
@@ -546,7 +617,11 @@ mod tests {
         std::fs::write(&path, &ended).unwrap();
         assert!(!turn_state(&path).0);
 
-        let interrupted = open + &entry("user", ",\"message\":{\"content\":\"[Request interrupted by user]\"}");
+        let interrupted = open
+            + &entry(
+                "user",
+                ",\"message\":{\"content\":\"[Request interrupted by user]\"}",
+            );
         std::fs::write(&path, &interrupted).unwrap();
         assert!(!turn_state(&path).0);
         let _ = std::fs::remove_file(path);

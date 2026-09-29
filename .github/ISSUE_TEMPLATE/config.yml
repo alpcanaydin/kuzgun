@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/alpcanaydin/kuzgun/discussions
+    about: Ask a question or talk through an idea before it becomes an issue.
+  - name: Security vulnerability
+    url: https://github.com/alpcanaydin/kuzgun/security/advisories/new
+    about: Report it privately. Please don't open a public issue.

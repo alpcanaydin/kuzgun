@@ -1,8 +1,8 @@
 //! Bottom-right toasts (the kit's notification layer) for results and errors.
 
-use gpui_kit::{App, Window};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::notification::Notification;
+use gpui_kit::{App, Window};
 
 /// Push on the next frame: callers are usually inside a render or an
 /// entity update, where the window's root can't be borrowed.
@@ -10,7 +10,6 @@ use gpui_kit::component::notification::Notification;
 pub fn push(window: &mut Window, cx: &mut App, ok: Option<bool>, msg: String) {
     push_at(window, cx, ok, msg, None);
 }
-
 
 fn push_at(
     window: &mut Window,

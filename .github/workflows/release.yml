@@ -1,0 +1,137 @@
+name: release
+
+# A pushed tag `v<version>` (scripts/tag-release.sh) builds, signs, notarizes
+# and publishes Kuzgun: the DMG and the Sparkle appcast go to a GitHub release,
+# and the Homebrew cask gets the new version.
+'on':
+  push:
+    tags: ['v*']
+
+# One release at a time, never cancelled half-way through notarization.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # GitHub can deliver one tag push twice; the second run finds the release
+  # already published and stops here instead of failing after a rebuild.
+  check:
+    name: Not yet published
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      published: ${{ steps.check.outputs.published }}
+    steps:
+      - id: check
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::$GITHUB_REF_NAME is already published"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    name: Build and publish
+    needs: check
+    if: needs.check.outputs.published != 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    # The signing secrets live in this environment only.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.dmg.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The tag matches Cargo.toml
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$version" != "$cargo_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME but Cargo.toml says $cargo_version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # No build cache here: a release builds from a clean tree.
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Signing keychain
+        run: .github/scripts/keychain.sh
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+
+      - name: Release notes
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body > "$RUNNER_TEMP/notes.md"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build, sign, notarize
+        run: scripts/release.sh "$RUNNER_TEMP/notes.md"
+        env:
+          KUZGUN_REPO: ${{ github.repository }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+
+      - name: Checksum
+        id: dmg
+        run: |
+          dmg="target/release/bundle/Kuzgun-$VERSION-arm64.dmg"
+          echo "sha256=$(shasum -a 256 "$dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Publish the release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "target/release/bundle/Kuzgun-$VERSION-arm64.dmg" \
+            target/release/bundle/appcast.xml \
+            --repo "$GITHUB_REPOSITORY" --title "Kuzgun $VERSION" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          [ -n "${RELEASE_KEYCHAIN:-}" ] && security delete-keychain "$RELEASE_KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP"/notary.p8
+
+  homebrew:
+    name: Homebrew cask
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tap is its own repo (alpcanaydin/homebrew-kuzgun); a fine-grained
+      # token with contents: write on that repo alone pushes the new cask.
+      - name: Update the cask
+        run: .github/scripts/cask.sh
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || 'alpcanaydin/homebrew-kuzgun' }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

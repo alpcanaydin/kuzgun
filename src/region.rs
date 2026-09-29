@@ -27,7 +27,11 @@ pub struct Region {
 impl Region {
     pub fn new(app: &Entity<KuzgunApp>, kind: RegionKind, cx: &mut Context<Self>) -> Self {
         let observe = cx.observe(app, |_, _, cx| cx.notify());
-        Self { app: app.downgrade(), kind, _observe: observe }
+        Self {
+            app: app.downgrade(),
+            kind,
+            _observe: observe,
+        }
     }
 }
 

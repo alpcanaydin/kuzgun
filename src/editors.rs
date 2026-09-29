@@ -40,7 +40,10 @@ const KNOWN: [&str; 22] = [
 static INSTALLED: LazyLock<Vec<Editor>> = LazyLock::new(scan);
 
 fn scan() -> Vec<Editor> {
-    let mut dirs: Vec<PathBuf> = vec![PathBuf::from("/Applications"), PathBuf::from("/System/Applications")];
+    let mut dirs: Vec<PathBuf> = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+    ];
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join("Applications"));
     }
@@ -55,12 +58,19 @@ fn scan() -> Vec<Editor> {
         .filter_map(|name| {
             // "WebStorm 2026.3 EAP.app" still counts as WebStorm; the plain
             // name wins when both exist.
-            let stem = |p: &Path| p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            let app = apps
-                .iter()
-                .find(|p| stem(p) == *name)
-                .or_else(|| apps.iter().find(|p| stem(p).starts_with(&format!("{name} "))))?;
-            Some(Editor { name: name.to_string(), app: app.clone() })
+            let stem = |p: &Path| {
+                p.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            };
+            let app = apps.iter().find(|p| stem(p) == *name).or_else(|| {
+                apps.iter()
+                    .find(|p| stem(p).starts_with(&format!("{name} ")))
+            })?;
+            Some(Editor {
+                name: name.to_string(),
+                app: app.clone(),
+            })
         })
         .collect()
 }
@@ -79,7 +89,10 @@ pub fn open(file: &Path) -> Result<(), String> {
         let bin = parts.next().unwrap_or_default().to_string();
         let args: Vec<String> = parts.map(str::to_string).collect();
         // GUI apps get a login-less PATH: look in Homebrew and /usr/local too.
-        let path_env = format!("{}:/opt/homebrew/bin:/usr/local/bin", std::env::var("PATH").unwrap_or_default());
+        let path_env = format!(
+            "{}:/opt/homebrew/bin:/usr/local/bin",
+            std::env::var("PATH").unwrap_or_default()
+        );
         return std::process::Command::new(&bin)
             .args(&args)
             .arg(file)
@@ -88,10 +101,16 @@ pub fn open(file: &Path) -> Result<(), String> {
             .map(|_| ())
             .map_err(|e| format!("{bin}: {e}"));
     }
-    let app = installed().iter().find(|e| e.name == prefs.editor_app).map(|e| e.app.clone());
+    let app = installed()
+        .iter()
+        .find(|e| e.name == prefs.editor_app)
+        .map(|e| e.app.clone());
     let mut c = std::process::Command::new("open");
     if let Some(app) = app {
         c.arg("-a").arg(app);
     }
-    c.arg(file).spawn().map(|_| ()).map_err(|e| format!("open: {e}"))
+    c.arg(file)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open: {e}"))
 }

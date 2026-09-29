@@ -4,11 +4,11 @@ use gpui_kit::*;
 
 mod actions;
 mod agents;
+mod agents_page;
 mod app;
 mod board;
 mod deps;
 mod detail;
-mod agents_page;
 mod dock;
 mod editors;
 mod files;
@@ -30,6 +30,7 @@ mod theme;
 mod themes;
 mod toast;
 mod transcript;
+mod updater;
 mod watch;
 
 /// Handle of the main window, for dock reopen.
@@ -54,11 +55,17 @@ fn main() {
         for (pi, p) in b.projects.iter().enumerate() {
             let n = b.tickets.iter().filter(|t| t.project == pi).count();
             let docs: Vec<&str> = p.docs.iter().map(|d| d.name.as_str()).collect();
-            println!("  project {} [{}] {n} tickets, docs {docs:?}, map {}", p.title, p.key, p.map.is_some());
+            println!(
+                "  project {} [{}] {n} tickets, docs {docs:?}, map {}",
+                p.title,
+                p.key,
+                p.map.is_some()
+            );
         }
         let mut st: std::collections::BTreeMap<String, usize> = Default::default();
         for t in &b.tickets {
-            *st.entry(format!("{} -> {:?}", t.status_key, t.category)).or_default() += 1;
+            *st.entry(format!("{} -> {:?}", t.status_key, t.category))
+                .or_default() += 1;
         }
         for (k, v) in st {
             println!("  status {k}: {v}");
@@ -68,23 +75,49 @@ fn main() {
         let unresolved: Vec<String> = b
             .tickets
             .iter()
-            .flat_map(|t| t.blocked_refs.iter().filter(|r| r.hit.is_none() && r.project.is_none()).map(move |r| format!("{}: {}", t.key, r.text)))
+            .flat_map(|t| {
+                t.blocked_refs
+                    .iter()
+                    .filter(|r| r.hit.is_none() && r.project.is_none())
+                    .map(move |r| format!("{}: {}", t.key, r.text))
+            })
             .collect();
-        println!("  blocked-by refs {refs}, resolved edges {edges}, unresolved {}", unresolved.len());
+        println!(
+            "  blocked-by refs {refs}, resolved edges {edges}, unresolved {}",
+            unresolved.len()
+        );
         for u in unresolved.iter().take(8) {
             println!("    ? {u}");
         }
-        let facets: Vec<String> = b.facets.iter().map(|f| format!("{}({})", f.key, f.values.len())).collect();
+        let facets: Vec<String> = b
+            .facets
+            .iter()
+            .map(|f| format!("{}({})", f.key, f.values.len()))
+            .collect();
         println!("  facets {facets:?}");
-        let (checks, done): (usize, usize) = b.tickets.iter().map(|t| t.checklist_counts()).fold((0, 0), |a, (d, n)| (a.0 + n, a.1 + d));
-        println!("  checkboxes {done}/{checks}, untitled {}", b.tickets.iter().filter(|t| t.title.is_empty()).count());
+        let (checks, done): (usize, usize) = b
+            .tickets
+            .iter()
+            .map(|t| t.checklist_counts())
+            .fold((0, 0), |a, (d, n)| (a.0 + n, a.1 + d));
+        println!(
+            "  checkboxes {done}/{checks}, untitled {}",
+            b.tickets.iter().filter(|t| t.title.is_empty()).count()
+        );
         return;
     }
     // `kuzgun --conversation claude|codex <file>`: print a transcript summary.
     if args.get(1).map(String::as_str) == Some("--conversation") {
-        let provider = if args.get(2).map(String::as_str) == Some("codex") { transcript::Provider::Codex } else { transcript::Provider::Claude };
+        let provider = if args.get(2).map(String::as_str) == Some("codex") {
+            transcript::Provider::Codex
+        } else {
+            transcript::Provider::Claude
+        };
         let mut t = transcript::Transcript::default();
-        t.update(std::path::Path::new(args.get(3).map(String::as_str).unwrap_or_default()), provider);
+        t.update(
+            std::path::Path::new(args.get(3).map(String::as_str).unwrap_or_default()),
+            provider,
+        );
         let count = |k: transcript::Kind| t.entries.iter().filter(|e| e.kind == k).count();
         println!(
             "entries {} · prompts {} · replies {} · thinking {} · tools {} (with output {})",
@@ -95,7 +128,12 @@ fn main() {
             count(transcript::Kind::Tool),
             t.entries.iter().filter(|e| e.output.is_some()).count()
         );
-        for e in t.entries.iter().filter(|e| e.kind == transcript::Kind::Tool).take(4) {
+        for e in t
+            .entries
+            .iter()
+            .filter(|e| e.kind == transcript::Kind::Tool)
+            .take(4)
+        {
             println!("  tool {} · {}", e.tool.clone().unwrap_or_default(), e.text);
         }
         return;
@@ -125,6 +163,7 @@ fn main() {
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
         actions::bind_keys(cx);
+        updater::init(cx);
         menus::install(cx);
         if let Err(e) = theme::load_embedded_fonts(cx) {
             eprintln!("font load error: {e:#}");
@@ -175,8 +214,14 @@ fn open_main_window(cx: &mut App, auto_open: bool) {
             // A path argument opens that folder; otherwise the last board.
             // `--ticket WS-5` opens that ticket once the board loads.
             let args: Vec<String> = std::env::args().collect();
-            let ticket = args.iter().position(|a| a == "--ticket").and_then(|i| args.get(i + 1).cloned());
-            let arg = args.get(1).filter(|a| !a.starts_with("--")).map(std::path::PathBuf::from);
+            let ticket = args
+                .iter()
+                .position(|a| a == "--ticket")
+                .and_then(|i| args.get(i + 1).cloned());
+            let arg = args
+                .get(1)
+                .filter(|a| !a.starts_with("--"))
+                .map(std::path::PathBuf::from);
             let files = args.iter().any(|a| a == "--files");
             view.update(cx, |app, _| {
                 app.pending_ticket = ticket;

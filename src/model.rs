@@ -77,8 +77,8 @@ pub fn categorize(status: &str) -> Category {
         | "unstarted" | "new" | "blocked" | "next" | "selected" => Category::Todo,
         "claimed" | "in-progress" | "doing" | "wip" | "started" | "active" | "working"
         | "implementing" => Category::InProgress,
-        "in-review" | "review" | "reviewing" | "qa" | "testing" | "verify" | "verifying"
-        | "pr" | "needs-review" => Category::InReview,
+        "in-review" | "review" | "reviewing" | "qa" | "testing" | "verify" | "verifying" | "pr"
+        | "needs-review" => Category::InReview,
         "done" | "resolved" | "closed" | "complete" | "completed" | "shipped" | "merged"
         | "fixed" | "released" | "answered" => Category::Done,
         "wontfix" | "won't-fix" | "wont-fix" | "canceled" | "cancelled" | "out-of-scope"
@@ -96,13 +96,19 @@ pub fn categorize(status: &str) -> Category {
 /// The status word of a status line, without a note after it.
 fn clean_status(s: &str) -> String {
     let s = s.trim().trim_matches('`');
-    let cut = [" (", "(", "（", ",", "，", ";", "；", "、", " - ", " — ", " – ", ": ", "："]
-        .iter()
-        .filter_map(|sep| s.find(sep))
-        .min()
-        .unwrap_or(s.len());
+    let cut = [
+        " (", "(", "（", ",", "，", ";", "；", "、", " - ", " — ", " – ", ": ", "：",
+    ]
+    .iter()
+    .filter_map(|sep| s.find(sep))
+    .min()
+    .unwrap_or(s.len());
     let head = s[..cut].trim().trim_matches(['`', '*']);
-    if head.is_empty() { s.to_string() } else { head.to_string() }
+    if head.is_empty() {
+        s.to_string()
+    } else {
+        head.to_string()
+    }
 }
 
 pub fn normalize(status: &str) -> String {
@@ -329,19 +335,27 @@ impl Board {
                     continue;
                 }
             };
-            let fname = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let fname = file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let parent = file.parent().unwrap_or(&root).to_path_buf();
             let in_issue_dir = is_issue_dir(&parent);
             let fm = front_matter(&text).0;
             let has_status = fm.keys().any(|k| k.eq_ignore_ascii_case("status"))
-                || header_props(&text).iter().any(|(k, _)| k.eq_ignore_ascii_case("status"));
+                || header_props(&text)
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case("status"));
             // Tickets live in `issues/`. A small-numbered file next to a spec
             // or map with a status also counts. Dated plans, ADRs
             // (`0001-x.md`) and notes with a status line do not.
             let small_num = NUM_FILE
                 .captures(&fname)
                 .is_some_and(|c| c[1].len() <= 3 && !DATED_FILE.is_match(&fname));
-            let beside_spec = ["spec.md", "map.md", "PRD.md", "prd.md"].iter().any(|d| parent.join(d).is_file());
+            let beside_spec = ["spec.md", "map.md", "PRD.md", "prd.md"]
+                .iter()
+                .any(|d| parent.join(d).is_file());
             let is_ticket = if in_issue_dir {
                 !is_doc_name(&fname)
             } else {
@@ -429,7 +443,11 @@ impl Board {
                 .docs
                 .iter()
                 .find(|d| d.name.eq_ignore_ascii_case("map.md"))
-                .and_then(|d| std::fs::read_to_string(&d.path).ok().map(|t| parse_map(&d.path, &t)));
+                .and_then(|d| {
+                    std::fs::read_to_string(&d.path)
+                        .ok()
+                        .map(|t| parse_map(&d.path, &t))
+                });
             if let Some(d) = p.docs.first() {
                 // "PRD: Cookbooks" and "Spec: Cookbooks" name the doc, not the project.
                 let t = DOC_PREFIX.replace(d.title.trim(), "");
@@ -482,7 +500,11 @@ impl Board {
     /// Columns for the statuses in use in one project (all when None).
     pub fn columns_of(&self, project: Option<usize>, include_defaults: bool) -> Vec<Column> {
         let mut seen: BTreeMap<(Category, String), String> = BTreeMap::new();
-        for t in self.tickets.iter().filter(|t| project.is_none_or(|p| t.project == p)) {
+        for t in self
+            .tickets
+            .iter()
+            .filter(|t| project.is_none_or(|p| t.project == p))
+        {
             seen.entry((t.category, rank_key(&t.status_key)))
                 .or_insert_with(|| t.status_key.clone());
         }
@@ -506,15 +528,22 @@ impl Board {
     pub fn is_blocked(&self, ix: usize) -> bool {
         let t = &self.tickets[ix];
         !t.category.is_closed()
-            && (t.blocked_by.iter().any(|&b| !self.tickets[b].category.is_closed())
-                || t.blocked_refs.iter().filter_map(|r| r.project).any(|p| self.project_open(p)))
+            && (t
+                .blocked_by
+                .iter()
+                .any(|&b| !self.tickets[b].category.is_closed())
+                || t.blocked_refs
+                    .iter()
+                    .filter_map(|r| r.project)
+                    .any(|p| self.project_open(p)))
     }
 
     /// The project has a ticket that is not closed.
     pub fn project_open(&self, p: usize) -> bool {
-        self.tickets.iter().any(|t| t.project == p && !t.category.is_closed())
+        self.tickets
+            .iter()
+            .any(|t| t.project == p && !t.category.is_closed())
     }
-
 
     pub fn mode(&self, ix: usize) -> Option<Mode> {
         let t = &self.tickets[ix];
@@ -548,8 +577,21 @@ impl Board {
 /// prose fields are left out; they have their own places.
 fn find_facets(tickets: &[Ticket]) -> Vec<Facet> {
     const SKIP: [&str; 16] = [
-        "status", "blocked-by", "blocked_by", "depends-on", "spec", "prd", "map", "what-to-build",
-        "needs-a-human", "title", "claimed-by", "claimed_by", "claimed-at", "claimed_at", "parent",
+        "status",
+        "blocked-by",
+        "blocked_by",
+        "depends-on",
+        "spec",
+        "prd",
+        "map",
+        "what-to-build",
+        "needs-a-human",
+        "title",
+        "claimed-by",
+        "claimed_by",
+        "claimed-at",
+        "claimed_at",
+        "parent",
         "undermined-by",
     ];
     let mut order: Vec<String> = Vec::new();
@@ -560,7 +602,11 @@ fn find_facets(tickets: &[Ticket]) -> Vec<Facet> {
     for t in tickets {
         let mut seen_here: Vec<String> = Vec::new();
         let mut keys: Vec<String> = t.props.iter().map(|(k, _)| k.clone()).collect();
-        if !t.labels.is_empty() && !keys.iter().any(|k| matches!(normalize(k).as_str(), "labels" | "label" | "tags")) {
+        if !t.labels.is_empty()
+            && !keys
+                .iter()
+                .any(|k| matches!(normalize(k).as_str(), "labels" | "label" | "tags"))
+        {
             keys.push("Labels".into());
         }
         for key in keys {
@@ -593,8 +639,11 @@ fn find_facets(tickets: &[Ticket]) -> Vec<Facet> {
             if values.is_empty() || values.len() > 16 {
                 return None;
             }
-            values.sort_by(|a, b| natural_key(a).cmp(&natural_key(b)));
-            Some(Facet { key: spelled.remove(&k).unwrap_or(k), values })
+            values.sort_by_key(|a| natural_key(a));
+            Some(Facet {
+                key: spelled.remove(&k).unwrap_or(k),
+                values,
+            })
         })
         .collect()
 }
@@ -602,7 +651,11 @@ fn find_facets(tickets: &[Ticket]) -> Vec<Facet> {
 /// `T10` after `T9`: digits compare as numbers.
 pub fn natural_key(s: &str) -> (String, u64) {
     let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    let letters: String = s.chars().filter(|c| !c.is_ascii_digit()).collect::<String>().to_lowercase();
+    let letters: String = s
+        .chars()
+        .filter(|c| !c.is_ascii_digit())
+        .collect::<String>()
+        .to_lowercase();
     (letters, digits.parse().unwrap_or(0))
 }
 
@@ -629,7 +682,11 @@ fn triage_roles(root: &Path) -> HashMap<String, (String, String)> {
         return out;
     };
     for line in text.lines() {
-        let cells: Vec<&str> = line.split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+        let cells: Vec<&str> = line
+            .split('|')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect();
         if cells.len() < 2 || !cells[0].starts_with('`') || !cells[1].starts_with('`') {
             continue;
         }
@@ -660,14 +717,20 @@ pub fn role_meaning(status_key: &str) -> Option<&'static str> {
 
 /// Destination, fog and out-of-scope bullets of a wayfinder map.
 pub fn parse_map(path: &Path, text: &str) -> MapInfo {
-    let mut m = MapInfo { path: path.to_path_buf(), ..Default::default() };
+    let mut m = MapInfo {
+        path: path.to_path_buf(),
+        ..Default::default()
+    };
     let mut section = String::new();
     for line in text.lines() {
         if let Some(h) = line.strip_prefix("## ") {
             section = h.trim().to_lowercase();
             continue;
         }
-        let bullet = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).map(str::trim);
+        let bullet = line
+            .strip_prefix("- ")
+            .or_else(|| line.strip_prefix("* "))
+            .map(str::trim);
         match section.as_str() {
             "destination" if !line.trim().is_empty() => {
                 if !m.destination.is_empty() {
@@ -694,7 +757,15 @@ pub fn parse_map(path: &Path, text: &str) -> MapInfo {
 
 /// Field names that mean a delivery stage. They keep their own name and
 /// get the milestone diamond.
-const MILESTONE_KEYS: [&str; 7] = ["tranche", "milestone", "phase", "stage", "sprint", "iteration", "release"];
+const MILESTONE_KEYS: [&str; 7] = [
+    "tranche",
+    "milestone",
+    "phase",
+    "stage",
+    "sprint",
+    "iteration",
+    "release",
+];
 
 pub fn is_milestone(key: &str) -> bool {
     MILESTONE_KEYS.contains(&normalize(key).as_str())
@@ -711,8 +782,19 @@ pub fn field_label(key: &str) -> String {
 /// Order statuses inside one category: known triage roles first.
 fn rank_key(s: &str) -> String {
     let order = [
-        "needs-triage", "needs-info", "draft", "backlog", "open", "ready-for-agent",
-        "ready-for-human", "todo", "claimed", "in-progress", "in-review", "done", "resolved",
+        "needs-triage",
+        "needs-info",
+        "draft",
+        "backlog",
+        "open",
+        "ready-for-agent",
+        "ready-for-human",
+        "todo",
+        "claimed",
+        "in-progress",
+        "in-review",
+        "done",
+        "resolved",
         "wontfix",
     ];
     match order.iter().position(|o| *o == s) {
@@ -746,27 +828,44 @@ fn resolve_relations(projects: &[Project], tickets: &mut [Ticket]) {
                 .path
                 .as_ref()
                 .and_then(|p| by_path.get(&canon(p)).copied())
-                .or_else(|| r.num.and_then(|num| by_num.get(&(tickets[i].project, num)).copied()))
+                .or_else(|| {
+                    r.num
+                        .and_then(|num| by_num.get(&(tickets[i].project, num)).copied())
+                })
                 .or_else(|| {
                     // A bare path such as `.scratch/x/issues/01-a.md`.
                     let text = r.text.trim().trim_matches(['`', '"']);
                     text.ends_with(".md")
-                        .then(|| (0..n).find(|&j| tickets[j].path.ends_with(Path::new(text).components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect::<PathBuf>())))
+                        .then(|| {
+                            (0..n).find(|&j| {
+                                tickets[j].path.ends_with(
+                                    Path::new(text)
+                                        .components()
+                                        .filter(|c| !matches!(c, std::path::Component::CurDir))
+                                        .collect::<PathBuf>(),
+                                )
+                            })
+                        })
                         .flatten()
                 })
                 .or_else(|| {
                     // "Blocked by" may name a ticket by its title.
                     let want = r.text.trim().trim_matches(['`', '"', '*']).to_lowercase();
                     let same = |j: &usize| tickets[*j].project == tickets[i].project;
-                    let hits: Vec<usize> = (0..n).filter(|&j| !want.is_empty() && tickets[j].title.to_lowercase() == want).collect();
-                    hits.iter().copied().find(same).or_else(|| hits.first().copied())
+                    let hits: Vec<usize> = (0..n)
+                        .filter(|&j| !want.is_empty() && tickets[j].title.to_lowercase() == want)
+                        .collect();
+                    hits.iter()
+                        .copied()
+                        .find(same)
+                        .or_else(|| hits.first().copied())
                 });
             let project = if hit.is_none() {
                 r.path.as_ref().and_then(|p| {
                     let p = canon(p);
-                    projects
-                        .iter()
-                        .position(|pr| canon(&pr.dir) == p || pr.docs.iter().any(|d| canon(&d.path) == p))
+                    projects.iter().position(|pr| {
+                        canon(&pr.dir) == p || pr.docs.iter().any(|d| canon(&d.path) == p)
+                    })
                 })
             } else {
                 None
@@ -819,7 +918,11 @@ fn assign_keys(projects: &mut [Project]) {
             .filter(|w| !w.is_empty())
             .collect();
         let mut key: String = if words.len() >= 2 {
-            words.iter().take(3).filter_map(|w| w.chars().next()).collect()
+            words
+                .iter()
+                .take(3)
+                .filter_map(|w| w.chars().next())
+                .collect()
         } else {
             words
                 .first()
@@ -859,20 +962,34 @@ pub enum Tracker {
 pub fn locate_tracker(picked: &Path) -> Tracker {
     let scratch = picked.join(".scratch");
     let config = std::fs::read_to_string(tracker_doc(picked)).unwrap_or_default();
-    let heading = config.lines().find(|l| l.starts_with("# ")).unwrap_or_default();
+    let heading = config
+        .lines()
+        .find(|l| l.starts_with("# "))
+        .unwrap_or_default();
     // A freeform "Other" tracker can still describe local markdown files.
     let local = heading.to_lowercase().contains("local") || LOCAL_FOLDER.is_match(&config);
     if !config.is_empty() && !local {
         // A remote tracker wins over a stray `.scratch/` folder.
         let name = heading.trim_start_matches("# ");
         let name = name.split_once(':').map_or(name, |(_, n)| n).trim();
-        let name = if name.is_empty() { "another tracker".to_string() } else { name.to_string() };
+        let name = if name.is_empty() {
+            "another tracker".to_string()
+        } else {
+            name.to_string()
+        };
         return Tracker::Remote(name);
     }
     // The local template names its folder in backticks: "files in `.scratch/`".
-    if let Some(rel) = LOCAL_FOLDER.captures(&config).map(|c| c[1].trim_end_matches('/').to_string()) {
+    if let Some(rel) = LOCAL_FOLDER
+        .captures(&config)
+        .map(|c| c[1].trim_end_matches('/').to_string())
+    {
         let dir = picked.join(&rel);
-        return if dir.is_dir() { Tracker::Local(dir) } else { Tracker::Absent(rel) };
+        return if dir.is_dir() {
+            Tracker::Local(dir)
+        } else {
+            Tracker::Absent(rel)
+        };
     }
     if scratch.is_dir() {
         return Tracker::Local(scratch);
@@ -906,8 +1023,10 @@ fn tracker_doc(repo: &Path) -> PathBuf {
     repo.join("docs/agents/issue-tracker.md")
 }
 
-static BRIEF_CATEGORY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\*\*Category:\*\*\s*`?([A-Za-z-]+)").unwrap());
-static LOCAL_FOLDER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)markdown files\W{0,3}(?:in|under) `([^`]+)`").unwrap());
+static BRIEF_CATEGORY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\*\*Category:\*\*\s*`?([A-Za-z-]+)").unwrap());
+static LOCAL_FOLDER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)markdown files\W{0,3}(?:in|under) `([^`]+)`").unwrap());
 static DOC_POINTER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+\.md)`").unwrap());
 
 /// A folder holds a local tracker: an `issues/` folder with markdown, or a
@@ -917,16 +1036,29 @@ fn has_tracker_files(dir: &Path, depth: usize) -> bool {
         return false;
     };
     let entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-    if entries.iter().any(|p| p.file_name().is_some_and(|n| n == "spec.md" || n == "map.md")) {
+    if entries.iter().any(|p| {
+        p.file_name()
+            .is_some_and(|n| n == "spec.md" || n == "map.md")
+    }) {
         return true;
     }
-    if is_issue_dir(dir) && entries.iter().any(|p| p.extension().is_some_and(|e| e == "md")) {
+    if is_issue_dir(dir)
+        && entries
+            .iter()
+            .any(|p| p.extension().is_some_and(|e| e == "md"))
+    {
         return true;
     }
     depth < 3
         && entries.iter().filter(|p| p.is_dir()).any(|p| {
-            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            !matches!(name.as_str(), "node_modules" | ".git" | "target" | "dist" | "build") && has_tracker_files(p, depth + 1)
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            !matches!(
+                name.as_str(),
+                "node_modules" | ".git" | "target" | "dist" | "build"
+            ) && has_tracker_files(p, depth + 1)
         })
 }
 
@@ -941,10 +1073,18 @@ fn mark_ruled_out(projects: &[Project], tickets: &mut [Ticket]) {
         let targets: Vec<PathBuf> = map
             .out_of_scope
             .iter()
-            .flat_map(|line| MD_LINK.captures_iter(line).map(|c| canon(&dir.join(&c[2]))).collect::<Vec<_>>())
+            .flat_map(|line| {
+                MD_LINK
+                    .captures_iter(line)
+                    .map(|c| canon(&dir.join(&c[2])))
+                    .collect::<Vec<_>>()
+            })
             .collect();
         for t in tickets.iter_mut().filter(|t| t.project == pix) {
-            let answered = t.raw.lines().any(|l| l.trim().eq_ignore_ascii_case("## answer"));
+            let answered = t
+                .raw
+                .lines()
+                .any(|l| l.trim().eq_ignore_ascii_case("## answer"));
             if !answered && targets.contains(&canon(&t.path)) {
                 t.ruled_out = true;
                 t.apply_ruled_out();
@@ -986,7 +1126,9 @@ pub fn humanize(s: &str) -> String {
 
 fn is_issue_dir(p: &Path) -> bool {
     matches!(
-        p.file_name().map(|n| n.to_string_lossy().to_lowercase()).as_deref(),
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .as_deref(),
         Some("issues" | "tickets" | "tasks" | "todo")
     )
 }
@@ -1008,7 +1150,14 @@ fn doc_rank(name: &str) -> usize {
 }
 
 const SKIP_DIRS: [&str; 8] = [
-    "node_modules", "target", ".git", "dist", "build", ".next", "vendor", ".turbo",
+    "node_modules",
+    "target",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "vendor",
+    ".turbo",
 ];
 
 fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -1037,15 +1186,17 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 
 static DATED_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}").unwrap());
 static NUM_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)[-_ ](.+)\.md$").unwrap());
-static BOLD_PROP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\*\*([A-Za-z][A-Za-z0-9 '/_-]{0,40}?):?\*\*:?\s*(.*)$").unwrap());
+static BOLD_PROP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\*\*([A-Za-z][A-Za-z0-9 '/_-]{0,40}?):?\*\*:?\s*(.*)$").unwrap()
+});
 static PLAIN_PROP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Z][A-Za-z0-9 '/_-]{0,30}):\s+(\S.*)$").unwrap());
 static CHECK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\s*)[-*+] \[( |x|X)\] (.*)$").unwrap());
 static MD_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[([^\]]*)\]\(([^)\s]+\.md)(#[^)]*)?\)").unwrap());
-static DOC_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:PRD|Spec|Map)\s*[:：]\s*").unwrap());
+static DOC_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^(?:PRD|Spec|Map)\s*[:：]\s*").unwrap());
 static TITLE_NUM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#?(\d{1,4})(?:\s*[:.)\-：—–]\s*|\s+)(.+)$").unwrap());
 static LEAD_NUM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#?(\d{1,4})\b").unwrap());
@@ -1094,7 +1245,10 @@ fn first_h1(text: &str) -> Option<String> {
 
 /// Header properties between the H1 and the first `## ` heading.
 pub fn header_props(text: &str) -> Vec<(String, String)> {
-    header_lines(text).into_iter().map(|(_, k, v, _)| (k, v)).collect()
+    header_lines(text)
+        .into_iter()
+        .map(|(_, k, v, _)| (k, v))
+        .collect()
 }
 
 /// `(line index, key, value, bold)` of each header property line.
@@ -1126,12 +1280,30 @@ pub fn header_lines(text: &str) -> Vec<(usize, String, String, bool)> {
 
 /// Keys the side panel shows, so the body drops their lines.
 pub const PANEL_KEYS: [&str; 16] = [
-    "status", "type", "blocked by", "tranche", "spec", "label", "labels", "priority",
-    "assignee", "estimate", "due", "claimed by", "claimed at", "parent", "prd", "map",
+    "status",
+    "type",
+    "blocked by",
+    "tranche",
+    "spec",
+    "label",
+    "labels",
+    "priority",
+    "assignee",
+    "estimate",
+    "due",
+    "claimed by",
+    "claimed at",
+    "parent",
+    "prd",
+    "map",
 ];
 
 pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
-    let fname = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let fname = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let (num, slug) = match NUM_FILE.captures(&fname) {
         Some(c) => (c[1].parse().ok(), c[2].to_string()),
         None => (None, fname.trim_end_matches(".md").to_string()),
@@ -1197,7 +1369,10 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
             answer_body = true;
         }
         if in_comments
-            && (line.starts_with("### ") || line.starts_with("- ") || line.starts_with("* ") || line.starts_with("**"))
+            && (line.starts_with("### ")
+                || line.starts_with("- ")
+                || line.starts_with("* ")
+                || line.starts_with("**"))
         {
             comments += 1;
         }
@@ -1309,7 +1484,11 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
         kind: get("type")
             .or_else(|| BRIEF_CATEGORY.captures(text).map(|c| c[1].to_string()))
             // Some trackers keep the wayfinder type as a label: `wayfinder:research`.
-            .or_else(|| labels.iter().find_map(|l| l.strip_prefix("wayfinder:").map(str::to_string)))
+            .or_else(|| {
+                labels
+                    .iter()
+                    .find_map(|l| l.strip_prefix("wayfinder:").map(str::to_string))
+            })
             .map(|s| s.to_lowercase()),
         props: props.clone(),
         blocked_refs,
@@ -1339,13 +1518,24 @@ pub fn parse_ticket(path: &Path, text: &str) -> Ticket {
 pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
     // A note after a long dash explains the blockers; it names none.
     let v = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let v = [" — ", " – ", " —", "——"].iter().filter_map(|d| v.find(d)).min().map_or(v.as_str(), |i| &v[..i]).trim();
+    let v = [" — ", " – ", " —", "——"]
+        .iter()
+        .filter_map(|d| v.find(d))
+        .min()
+        .map_or(v.as_str(), |i| &v[..i])
+        .trim();
     let lower = v.to_lowercase();
     // "None" in the languages people write tickets in.
-    const NONE: [&str; 14] =
-        ["none", "nothing", "n/a", "-", "无", "無", "なし", "없음", "yok", "keine", "aucun", "ninguno", "nenhum", "нет"];
+    const NONE: [&str; 14] = [
+        "none", "nothing", "n/a", "-", "无", "無", "なし", "없음", "yok", "keine", "aucun",
+        "ninguno", "nenhum", "нет",
+    ];
     // "None", "None.", "None (…)", "None: …", "无（…）": the word, then no letter.
-    let none_word = |w: &str| lower.strip_prefix(w).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()));
+    let none_word = |w: &str| {
+        lower
+            .strip_prefix(w)
+            .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
+    };
     if lower.is_empty() || NONE.iter().any(|w| none_word(w)) {
         return Vec::new();
     }
@@ -1371,7 +1561,11 @@ pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
         .filter(|p| !p.is_empty())
         .flat_map(|p| {
             // `01, and 03`: a joining word before the next reference.
-            let p = p.strip_prefix("and ").or_else(|| p.strip_prefix("& ")).unwrap_or(&p).to_string();
+            let p = p
+                .strip_prefix("and ")
+                .or_else(|| p.strip_prefix("& "))
+                .unwrap_or(&p)
+                .to_string();
             // `01 and 02` / `01, 02` written without commas.
             if p.contains(" and ") && !p.contains('(') {
                 p.split(" and ").map(str::to_string).collect::<Vec<_>>()
@@ -1385,12 +1579,22 @@ pub fn parse_refs(value: &str, dir: &Path) -> Vec<RefSpec> {
             let num = path
                 .as_ref()
                 .and_then(|pp| pp.file_name())
-                .and_then(|f| NUM_FILE.captures(&f.to_string_lossy()).and_then(|c| c[1].parse().ok()))
+                .and_then(|f| {
+                    NUM_FILE
+                        .captures(&f.to_string_lossy())
+                        .and_then(|c| c[1].parse().ok())
+                })
                 .or_else(|| {
                     let s = p.trim_start_matches(['*', '`', '[']);
                     LEAD_NUM.captures(s).and_then(|c| c[1].parse().ok())
                 });
-            RefSpec { num, path, text: p, hit: None, project: None }
+            RefSpec {
+                num,
+                path,
+                text: p,
+                hit: None,
+                project: None,
+            }
         })
         .collect()
 }
@@ -1429,10 +1633,19 @@ mod tests {
             std::fs::write(p, body).unwrap();
         };
         w("feat/spec.md", "# Feature\n");
-        w("feat/issues/01-first.md", "# First\n\nStatus: ready-for-agent\n");
-        w("feat/issues/02-second.md", "# Second\n\n- [x] Done part\n\n## Blocked by\n\n- First\n\n## Comments\n\n- [ ] quoted, not a sub-task\n");
+        w(
+            "feat/issues/01-first.md",
+            "# First\n\nStatus: ready-for-agent\n",
+        );
+        w(
+            "feat/issues/02-second.md",
+            "# Second\n\n- [x] Done part\n\n## Blocked by\n\n- First\n\n## Comments\n\n- [ ] quoted, not a sub-task\n",
+        );
         w("later/spec.md", "# Later\n");
-        w("later/issues/01-after.md", "# After\n\nBlocked by: the [feature](../../feat/spec.md)\n\nStatus: ready-for-agent\n");
+        w(
+            "later/issues/01-after.md",
+            "# After\n\nBlocked by: the [feature](../../feat/spec.md)\n\nStatus: ready-for-agent\n",
+        );
         w("plans/2026-05-21-brand.md", "# Plan\n\nStatus: draft\n");
         w("adr/0001-choose-db.md", "# ADR\n\nStatus: accepted\n");
         w("research/note.md", "# Note\n\nStatus: beta\n");
@@ -1449,10 +1662,23 @@ mod tests {
 
     #[test]
     fn locates_trackers() {
-        let local = temp_repo("local", Some("# Issue tracker: Local Markdown\n\nIssues live as markdown files in `.scratch/`.\n"), true);
-        assert_eq!(locate_tracker(&local), Tracker::Local(local.join(".scratch")));
+        let local = temp_repo(
+            "local",
+            Some(
+                "# Issue tracker: Local Markdown\n\nIssues live as markdown files in `.scratch/`.\n",
+            ),
+            true,
+        );
+        assert_eq!(
+            locate_tracker(&local),
+            Tracker::Local(local.join(".scratch"))
+        );
 
-        let github = temp_repo("github", Some("# Issue tracker: GitHub\n\nIssues live as GitHub issues.\n"), true);
+        let github = temp_repo(
+            "github",
+            Some("# Issue tracker: GitHub\n\nIssues live as GitHub issues.\n"),
+            true,
+        );
         assert_eq!(locate_tracker(&github), Tracker::Remote("GitHub".into()));
 
         let bare = temp_repo("bare", None, true);
@@ -1462,12 +1688,28 @@ mod tests {
         std::fs::create_dir_all(moved.join("tickets-here")).unwrap();
         std::fs::write(moved.join("CLAUDE.md"), "## Agent skills\n\n### Issue tracker\n\nLocal files. See `notes/tracker.md`.\n\n### Triage labels\n").unwrap();
         std::fs::create_dir_all(moved.join("notes")).unwrap();
-        std::fs::write(moved.join("notes/tracker.md"), "# Issue tracker: ours\n\nIssues live as markdown files in `tickets-here/`.\n").unwrap();
-        assert_eq!(locate_tracker(&moved), Tracker::Local(moved.join("tickets-here")));
+        std::fs::write(
+            moved.join("notes/tracker.md"),
+            "# Issue tracker: ours\n\nIssues live as markdown files in `tickets-here/`.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            locate_tracker(&moved),
+            Tracker::Local(moved.join("tickets-here"))
+        );
         let _ = std::fs::remove_dir_all(&moved);
 
-        let ignored = temp_repo("ignored", Some("# Issue tracker: Local Markdown\n\nIssues live as local Markdown files under `.scratch/issues/`.\n"), false);
-        assert_eq!(locate_tracker(&ignored), Tracker::Absent(".scratch/issues".into()));
+        let ignored = temp_repo(
+            "ignored",
+            Some(
+                "# Issue tracker: Local Markdown\n\nIssues live as local Markdown files under `.scratch/issues/`.\n",
+            ),
+            false,
+        );
+        assert_eq!(
+            locate_tracker(&ignored),
+            Tracker::Absent(".scratch/issues".into())
+        );
         let _ = std::fs::remove_dir_all(&ignored);
 
         let plain = temp_repo("plain", None, false);
@@ -1500,7 +1742,8 @@ mod tests {
 
     #[test]
     fn parses_wayfinder_ticket() {
-        let text = "# Paddle\n\nType: research\nStatus: resolved\n\n## Question\n\nQ\n\n## Answer\n\nA\n";
+        let text =
+            "# Paddle\n\nType: research\nStatus: resolved\n\n## Question\n\nQ\n\n## Answer\n\nA\n";
         let t = parse_ticket(Path::new("/b/p/issues/01-paddle.md"), text);
         assert_eq!(t.kind.as_deref(), Some("research"));
         assert_eq!(t.category, Category::Done);
@@ -1537,10 +1780,23 @@ mod tests {
         let r = parse_refs("02, 03 (Sign in (server))", Path::new("/"));
         assert_eq!(r.len(), 2);
         assert_eq!(r[1].num, Some(3));
-        assert_eq!(parse_refs("04, 22 — both shipped; this revises where 04 put the list.", Path::new("/x")).len(), 2);
+        assert_eq!(
+            parse_refs(
+                "04, 22 — both shipped; this revises where 04 put the list.",
+                Path::new("/x")
+            )
+            .len(),
+            2
+        );
         assert!(parse_refs("无（第一张票；02 / 03 依赖本票）", Path::new("/x")).is_empty());
         assert!(parse_refs("Yok", Path::new("/x")).is_empty());
-        assert!(parse_refs("None. Needs `FAL_API_KEY` and a balance of about $10.", Path::new("/x")).is_empty());
+        assert!(
+            parse_refs(
+                "None. Needs `FAL_API_KEY` and a balance of about $10.",
+                Path::new("/x")
+            )
+            .is_empty()
+        );
         assert_eq!(parse_refs("Nonet 3", Path::new("/x")).len(), 1);
     }
 
@@ -1556,8 +1812,14 @@ mod tests {
 
     #[test]
     fn facets_skip_prose() {
-        let a = parse_ticket(Path::new("/b/p/issues/01-a.md"), "# A\n\n**Tranche:** T1\n\n**What to build:** a long text\n\n**Status:** open\n");
-        let b = parse_ticket(Path::new("/b/p/issues/02-b.md"), "# B\n\n**Tranche:** T2\n\n**What to build:** more\n\n**Status:** done\n");
+        let a = parse_ticket(
+            Path::new("/b/p/issues/01-a.md"),
+            "# A\n\n**Tranche:** T1\n\n**What to build:** a long text\n\n**Status:** open\n",
+        );
+        let b = parse_ticket(
+            Path::new("/b/p/issues/02-b.md"),
+            "# B\n\n**Tranche:** T2\n\n**What to build:** more\n\n**Status:** done\n",
+        );
         let f = find_facets(&[a, b]);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].key, "Tranche");

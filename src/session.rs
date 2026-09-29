@@ -96,10 +96,15 @@ fn step(e: &Entry) -> (IconName, &'static str, String) {
     let lower = name.to_lowercase();
     match lower.as_str() {
         "read" | "notebookread" | "view" => (IconName::FileText, "Read", file()),
-        "edit" | "multiedit" | "write" | "notebookedit" | "apply_patch" | "str_replace_based_edit_tool" => {
-            (IconName::FilePen, "Edited", file())
+        "edit"
+        | "multiedit"
+        | "write"
+        | "notebookedit"
+        | "apply_patch"
+        | "str_replace_based_edit_tool" => (IconName::FilePen, "Edited", file()),
+        "bash" | "shell" | "exec" | "exec_command" | "local_shell" | "bashoutput" => {
+            (IconName::Terminal, "Ran", target)
         }
-        "bash" | "shell" | "exec" | "exec_command" | "local_shell" | "bashoutput" => (IconName::Terminal, "Ran", target),
         "grep" | "glob" | "ls" => (IconName::Search, "Searched", target),
         "websearch" | "web_search" => (IconName::Search, "Searched the web for", target),
         "webfetch" | "web_fetch" => (IconName::Link, "Read", target),
@@ -109,9 +114,17 @@ fn step(e: &Entry) -> (IconName, &'static str, String) {
         "notice" => (IconName::Bell, "", target),
         _ if lower.starts_with("mcp__") => {
             let short = name.rsplit("__").next().unwrap_or(name).replace('_', " ");
-            (IconName::Settings2, "Called", format!("{short} {target}").trim().to_string())
+            (
+                IconName::Settings2,
+                "Called",
+                format!("{short} {target}").trim().to_string(),
+            )
         }
-        _ => (IconName::Settings2, "Used", format!("{name} {target}").trim().to_string()),
+        _ => (
+            IconName::Settings2,
+            "Used",
+            format!("{name} {target}").trim().to_string(),
+        ),
     }
 }
 
@@ -141,12 +154,18 @@ pub fn resume_command(run: &AgentRun) -> Option<String> {
 impl KuzgunApp {
     /// A path an agent wrote, relative to its worktree or the repo.
     fn session_rel(&self, path: &str) -> String {
-        let tree = self.session.as_ref().and_then(|s| match s.files.snap.as_ref().map(|x| &x.source) {
-            Some(crate::files::Source::Tree { dir, .. }) => Some(dir.clone()),
-            _ => None,
-        });
+        let tree =
+            self.session
+                .as_ref()
+                .and_then(|s| match s.files.snap.as_ref().map(|x| &x.source) {
+                    Some(crate::files::Source::Tree { dir, .. }) => Some(dir.clone()),
+                    _ => None,
+                });
         let repo = self.root.as_deref().and_then(crate::agents::repo_root);
-        let roots: Vec<&std::path::Path> = [tree.as_deref(), repo.as_deref()].into_iter().flatten().collect();
+        let roots: Vec<&std::path::Path> = [tree.as_deref(), repo.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
         crate::files::relative(path, &roots)
     }
 
@@ -193,20 +212,42 @@ impl KuzgunApp {
         }
         let ix = self.board.find_path(&s.ticket)?;
         let theme = cx.theme().clone();
-        let (muted, fg, border, accent) = (theme.muted_foreground, theme.foreground, theme.border, theme.accent);
+        let (muted, fg, border, accent) = (
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+            theme.accent,
+        );
         let now = now_unix();
         let runs = self.runs_of(ix);
-        let run = runs.iter().find(|r| r.transcript == s.run).or(runs.first()).cloned();
+        let run = runs
+            .iter()
+            .find(|r| r.transcript == s.run)
+            .or(runs.first())
+            .cloned();
         let running = run.as_ref().is_some_and(|r| r.state == RunState::Running);
-        let conv = run.as_ref().and_then(|r| self.conversations.get(&r.transcript));
+        let conv = run
+            .as_ref()
+            .and_then(|r| self.conversations.get(&r.transcript));
         let entries: &[Entry] = conv.map(|c| c.transcript.entries.as_slice()).unwrap_or(&[]);
-        let fresh = run.as_ref().is_some_and(|r| now - r.last_activity <= BACKGROUND_TTL);
+        let fresh = run
+            .as_ref()
+            .is_some_and(|r| now - r.last_activity <= BACKGROUND_TTL);
         let background: Vec<crate::transcript::Background> = conv
             .filter(|_| fresh)
-            .map(|c| c.transcript.background.iter().filter(|b| !b.done).cloned().collect())
+            .map(|c| {
+                c.transcript
+                    .background
+                    .iter()
+                    .filter(|b| !b.done)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let footer = (running || !background.is_empty()).then(|| {
-            let (turn_start, tokens) = conv.map(|c| (c.transcript.turn_start, c.transcript.turn_tokens)).unwrap_or((0, 0));
+            let (turn_start, tokens) = conv
+                .map(|c| (c.transcript.turn_start, c.transcript.turn_tokens))
+                .unwrap_or((0, 0));
             let (verb, doing) = if !running {
                 ("Waiting", "on background commands".to_string())
             } else {
@@ -233,7 +274,11 @@ impl KuzgunApp {
                 facts.push(span(now - turn_start));
             }
             if tokens > 0 {
-                facts.push(if tokens >= 1000 { format!("↓ {:.1}k tokens", tokens as f64 / 1000.) } else { format!("↓ {tokens} tokens") });
+                facts.push(if tokens >= 1000 {
+                    format!("↓ {:.1}k tokens", tokens as f64 / 1000.)
+                } else {
+                    format!("↓ {tokens} tokens")
+                });
             }
             facts.push(doing);
             let bg_open = s.bg_open;
@@ -253,7 +298,9 @@ impl KuzgunApp {
                     .children(background.iter().enumerate().map(|(i, b)| {
                         let shown = s.bg_shown.contains(&b.id);
                         let id = b.id.clone();
-                        let out = conv.and_then(|c| c.tails.get(&b.id).cloned()).unwrap_or_default();
+                        let out = conv
+                            .and_then(|c| c.tails.get(&b.id).cloned())
+                            .unwrap_or_default();
                         div()
                             .flex()
                             .flex_col()
@@ -270,9 +317,30 @@ impl KuzgunApp {
                                     .hover(|d| d.bg(muted.opacity(0.08)))
                                     .text_sm()
                                     .child(Spinner::new().xsmall().color(accent))
-                                    .child(div().flex_1().min_w_0().truncate().text_color(fg).child(b.label.clone()))
-                                    .child(div().text_xs().text_color(muted).child(if b.started > 0 { span(now - b.started) } else { String::new() }))
-                                    .child(Icon::new(if shown { IconName::ChevronDown } else { IconName::ChevronRight }).size(px(13.)).text_color(muted))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_color(fg)
+                                            .child(b.label.clone()),
+                                    )
+                                    .child(div().text_xs().text_color(muted).child(
+                                        if b.started > 0 {
+                                            span(now - b.started)
+                                        } else {
+                                            String::new()
+                                        },
+                                    ))
+                                    .child(
+                                        Icon::new(if shown {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronRight
+                                        })
+                                        .size(px(13.))
+                                        .text_color(muted),
+                                    )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(s) = &mut this.session
                                             && !s.bg_shown.remove(&id)
@@ -296,7 +364,11 @@ impl KuzgunApp {
                                         .text_xs()
                                         .font_family(crate::settings::mono_font())
                                         .text_color(fg)
-                                        .child(if out.is_empty() { "No output yet.".to_string() } else { out }),
+                                        .child(if out.is_empty() {
+                                            "No output yet.".to_string()
+                                        } else {
+                                            out
+                                        }),
                                 )
                             })
                     }))
@@ -329,8 +401,19 @@ impl KuzgunApp {
                         .shadow_lg()
                         .text_sm()
                         .child(Spinner::new().xsmall().color(accent))
-                        .child(div().flex_none().text_color(accent).child(ShimmerText::new(format!("{verb}…")).id("session-status")))
-                        .child(div().min_w_0().truncate().text_color(muted).child(format!("({})", facts.join(" · "))))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(accent)
+                                .child(ShimmerText::new(format!("{verb}…")).id("session-status")),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(muted)
+                                .child(format!("({})", facts.join(" · "))),
+                        )
                         .when(n > 0, |d| {
                             d.child(
                                 div()
@@ -350,7 +433,14 @@ impl KuzgunApp {
                                     .text_color(fg)
                                     .child(Icon::new(IconName::Terminal).size(px(12.)))
                                     .child(format!("{n} in background"))
-                                    .child(Icon::new(if bg_open { IconName::ChevronDown } else { IconName::ChevronUp }).size(px(12.)))
+                                    .child(
+                                        Icon::new(if bg_open {
+                                            IconName::ChevronDown
+                                        } else {
+                                            IconName::ChevronUp
+                                        })
+                                        .size(px(12.)),
+                                    )
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(s) = &mut this.session {
                                             s.bg_open = !s.bg_open;
@@ -374,72 +464,115 @@ impl KuzgunApp {
             return div().into_any_element();
         };
         let theme = cx.theme().clone();
-        let (muted, fg, border, accent) = (theme.muted_foreground, theme.foreground, theme.border, theme.accent);
+        let (muted, fg, border, accent) = (
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+            theme.accent,
+        );
         let now = now_unix();
         let runs = self.runs_of(ix);
-        let run = runs.iter().find(|r| r.transcript == s.run).or(runs.first()).cloned();
-        div().flex().flex_wrap().gap_2().children(runs.iter().enumerate().map(|(i, r)| {
-            let on = run.as_ref().is_some_and(|x| x.transcript == r.transcript);
-            let waiting = r.state != RunState::Running
-                && now - r.last_activity <= BACKGROUND_TTL
-                && self.conversations.get(&r.transcript).is_some_and(|c| c.transcript.background.iter().any(|b| !b.done));
-            let (state, color) = match r.state {
-                _ if waiting => ("Waiting on background".to_string(), theme.yellow),
-                RunState::Running => (format!("Working for {}", span(now - r.started)), theme.green),
-                RunState::AwaitingReview => ("Awaiting review".to_string(), theme.yellow),
-                RunState::Finished => (format!("Finished {}", ago_label(now - r.last_activity)), muted),
-            };
-            let path = r.transcript.clone();
-            let live = r.state == RunState::Running;
-            div()
-                .id(("session-run", i))
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .px_3()
-                .py_2()
-                .min_w(px(180.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(if on { muted.opacity(0.35) } else { border })
-                .when(on, |d| d.bg(muted.opacity(0.1)))
-                .cursor_pointer()
-                .hover(|d| d.bg(muted.opacity(0.08)))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(crate::icons::harness_logo(r.provider, 16.))
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(r.provider.label())),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1p5()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(if live {
-                            Icon::new(IconName::CircleDot).size(px(12.)).text_color(accent).into_any_element()
-                        } else {
-                            div().size(px(7.)).rounded_full().bg(color).into_any_element()
-                        })
-                        .child(state),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(s) = &mut this.session {
-                        s.run = path.clone();
-                        s.open.clear();
-                        s.follow = live;
-                        s.list.set_follow_mode(if live { FollowMode::Tail } else { FollowMode::Normal });
-                        s.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
-                        s.files = FilesView::default();
-                    }
-                    this.load_files(cx);
-                    cx.notify();
-                }))
-        })).into_any_element()
+        let run = runs
+            .iter()
+            .find(|r| r.transcript == s.run)
+            .or(runs.first())
+            .cloned();
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .children(runs.iter().enumerate().map(|(i, r)| {
+                let on = run.as_ref().is_some_and(|x| x.transcript == r.transcript);
+                let waiting = r.state != RunState::Running
+                    && now - r.last_activity <= BACKGROUND_TTL
+                    && self
+                        .conversations
+                        .get(&r.transcript)
+                        .is_some_and(|c| c.transcript.background.iter().any(|b| !b.done));
+                let (state, color) = match r.state {
+                    _ if waiting => ("Waiting on background".to_string(), theme.yellow),
+                    RunState::Running => (
+                        format!("Working for {}", span(now - r.started)),
+                        theme.green,
+                    ),
+                    RunState::AwaitingReview => ("Awaiting review".to_string(), theme.yellow),
+                    RunState::Finished => (
+                        format!("Finished {}", ago_label(now - r.last_activity)),
+                        muted,
+                    ),
+                };
+                let path = r.transcript.clone();
+                let live = r.state == RunState::Running;
+                div()
+                    .id(("session-run", i))
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .px_3()
+                    .py_2()
+                    .min_w(px(180.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(if on { muted.opacity(0.35) } else { border })
+                    .when(on, |d| d.bg(muted.opacity(0.1)))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(muted.opacity(0.08)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(crate::icons::harness_logo(r.provider, 16.))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(fg)
+                                    .child(r.provider.label()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(if live {
+                                Icon::new(IconName::CircleDot)
+                                    .size(px(12.))
+                                    .text_color(accent)
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .size(px(7.))
+                                    .rounded_full()
+                                    .bg(color)
+                                    .into_any_element()
+                            })
+                            .child(state),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(s) = &mut this.session {
+                            s.run = path.clone();
+                            s.open.clear();
+                            s.follow = live;
+                            s.list.set_follow_mode(if live {
+                                FollowMode::Tail
+                            } else {
+                                FollowMode::Normal
+                            });
+                            s.list.scroll_to(ListOffset {
+                                item_ix: 0,
+                                offset_in_item: px(0.),
+                            });
+                            s.files = FilesView::default();
+                        }
+                        this.load_files(cx);
+                        cx.notify();
+                    }))
+            }))
+            .into_any_element()
     }
 
     /// One row of the session story, drawn only while it is on screen:
@@ -452,10 +585,19 @@ impl KuzgunApp {
             return div().into_any_element();
         };
         let theme = cx.theme().clone();
-        let (muted, fg, border, accent) = (theme.muted_foreground, theme.foreground, theme.border, theme.accent);
+        let (muted, fg, border, accent) = (
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+            theme.accent,
+        );
         let now = now_unix();
         let runs = self.runs_of(ix);
-        let run = runs.iter().find(|r| r.transcript == s.run).or(runs.first()).cloned();
+        let run = runs
+            .iter()
+            .find(|r| r.transcript == s.run)
+            .or(runs.first())
+            .cloned();
         let entries: &[Entry] = run
             .as_ref()
             .and_then(|r| self.conversations.get(&r.transcript))
@@ -467,136 +609,214 @@ impl KuzgunApp {
             return gap(self.run_cards(cx));
         }
         let style = crate::detail::md_style(cx);
-        let md_of = |i: usize| run.as_ref().and_then(|r| self.conversations.get(&r.transcript)).and_then(|c| c.md.get(i).cloned().flatten());
+        let md_of = |i: usize| {
+            run.as_ref()
+                .and_then(|r| self.conversations.get(&r.transcript))
+                .and_then(|c| c.md.get(i).cloned().flatten())
+        };
         let all = items(entries);
         let last_work = all.iter().rposition(|it| matches!(it, Item::Work(..)));
         let mut story: Vec<AnyElement> = Vec::new();
         if let Some(item) = all.get(n - 1) {
             let n = n - 1;
             match *item {
-                    Item::Prompt(i) => {
-                        let e = &entries[i];
-                        let long = e.text.len() > 700;
-                        let open = !long || s.open.contains(&i);
-                        story.push(
-                            div()
-                                .flex()
-                                .justify_end()
-                                .child(
-                                    div()
-                                        .max_w(relative(0.85))
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .px_4()
-                                        .py_3()
-                                        .rounded(px(14.))
-                                        .bg(muted.opacity(0.12))
-                                        .child(div().when(!open, |d| d.max_h(px(150.)).overflow_hidden()).child(match md_of(i) {
-                                            Some(md) => TextView::new(&md).selectable(true).style(style.clone()).into_any_element(),
-                                            None => div().text_sm().text_color(fg).child(e.text.clone()).into_any_element(),
-                                        }))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .text_xs()
-                                                .text_color(muted)
-                                                .when(e.at > 0, |d| d.child(ago_label(now - e.at)))
-                                                .when(long, |d| {
-                                                    d.child(
-                                                        div()
-                                                            .id(("prompt-more", i))
-                                                            .text_color(accent)
-                                                            .cursor_pointer()
-                                                            .hover(|d| d.underline())
-                                                            .child(if open { "Show less" } else { "Show all" })
-                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                Item::Prompt(i) => {
+                    let e = &entries[i];
+                    let long = e.text.len() > 700;
+                    let open = !long || s.open.contains(&i);
+                    story.push(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .child(
+                                div()
+                                    .max_w(relative(0.85))
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .px_4()
+                                    .py_3()
+                                    .rounded(px(14.))
+                                    .bg(muted.opacity(0.12))
+                                    .child(
+                                        div()
+                                            .when(!open, |d| d.max_h(px(150.)).overflow_hidden())
+                                            .child(match md_of(i) {
+                                                Some(md) => TextView::new(&md)
+                                                    .selectable(true)
+                                                    .style(style.clone())
+                                                    .into_any_element(),
+                                                None => div()
+                                                    .text_sm()
+                                                    .text_color(fg)
+                                                    .child(e.text.clone())
+                                                    .into_any_element(),
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .when(e.at > 0, |d| d.child(ago_label(now - e.at)))
+                                            .when(long, |d| {
+                                                d.child(
+                                                    div()
+                                                        .id(("prompt-more", i))
+                                                        .text_color(accent)
+                                                        .cursor_pointer()
+                                                        .hover(|d| d.underline())
+                                                        .child(if open {
+                                                            "Show less"
+                                                        } else {
+                                                            "Show all"
+                                                        })
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
                                                                 if let Some(s) = &mut this.session
                                                                     && !s.open.remove(&i)
                                                                 {
                                                                     s.open.insert(i);
                                                                 }
                                                                 cx.notify();
-                                                            })),
-                                                    )
-                                                }),
-                                        ),
-                                )
-                                .into_any_element(),
-                        );
-                    }
-                    Item::Reply(i) => {
-                        let e = &entries[i];
-                        story.push(match md_of(i) {
-                            Some(md) => div().child(TextView::new(&md).selectable(true).style(style.clone())).into_any_element(),
-                            None => div().text_sm().text_color(fg).child(e.text.clone()).into_any_element(),
-                        });
-                    }
-                    Item::Work(from, to) => {
-                        let live = running && Some(n) == last_work && n + 1 == all.len();
-                        let open = live || s.open.contains(&from);
-                        let steps = entries[from..to].iter().filter(|e| e.kind == Kind::Tool).count();
-                        let start = entries[from].at;
-                        let end = entries.get(to).map(|e| e.at).filter(|&t| t > 0).unwrap_or(entries[to - 1].at);
-                        let worked = if start > 0 && end >= start { span(end - start) } else { String::new() };
-                        let title = if live {
-                            let since = if start > 0 { format!(" for {}", span(now - start)) } else { String::new() };
-                            format!("Working{since} · {steps} step{}", if steps == 1 { "" } else { "s" })
-                        } else if worked.is_empty() {
-                            format!("{steps} step{}", if steps == 1 { "" } else { "s" })
+                                                            },
+                                                        )),
+                                                )
+                                            }),
+                                    ),
+                            )
+                            .into_any_element(),
+                    );
+                }
+                Item::Reply(i) => {
+                    let e = &entries[i];
+                    story.push(match md_of(i) {
+                        Some(md) => div()
+                            .child(TextView::new(&md).selectable(true).style(style.clone()))
+                            .into_any_element(),
+                        None => div()
+                            .text_sm()
+                            .text_color(fg)
+                            .child(e.text.clone())
+                            .into_any_element(),
+                    });
+                }
+                Item::Work(from, to) => {
+                    let live = running && Some(n) == last_work && n + 1 == all.len();
+                    let open = live || s.open.contains(&from);
+                    let steps = entries[from..to]
+                        .iter()
+                        .filter(|e| e.kind == Kind::Tool)
+                        .count();
+                    let start = entries[from].at;
+                    let end = entries
+                        .get(to)
+                        .map(|e| e.at)
+                        .filter(|&t| t > 0)
+                        .unwrap_or(entries[to - 1].at);
+                    let worked = if start > 0 && end >= start {
+                        span(end - start)
+                    } else {
+                        String::new()
+                    };
+                    let title = if live {
+                        let since = if start > 0 {
+                            format!(" for {}", span(now - start))
                         } else {
-                            format!("Worked for {worked} · {steps} step{}", if steps == 1 { "" } else { "s" })
+                            String::new()
                         };
-                        let mut block = div().flex().flex_col().child(
-                            div()
-                                .id(("work", from))
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .h(px(34.))
-                                .px_3()
-                                .rounded(px(8.))
-                                .border_1()
-                                .border_color(border)
-                                .text_sm()
-                                .text_color(muted)
-                                .cursor_pointer()
-                                .hover(|d| d.bg(muted.opacity(0.06)).text_color(fg))
-                                // A spinner and a shimmer read as "still going"; a
-                                // green dot read as done.
-                                // Motion lives in the pill alone: an animation here
-                                // would redraw the whole story every frame.
-                                .child(if live {
-                                    Icon::new(IconName::CircleDot).size(px(14.)).text_color(accent).into_any_element()
+                        format!(
+                            "Working{since} · {steps} step{}",
+                            if steps == 1 { "" } else { "s" }
+                        )
+                    } else if worked.is_empty() {
+                        format!("{steps} step{}", if steps == 1 { "" } else { "s" })
+                    } else {
+                        format!(
+                            "Worked for {worked} · {steps} step{}",
+                            if steps == 1 { "" } else { "s" }
+                        )
+                    };
+                    let mut block = div().flex().flex_col().child(
+                        div()
+                            .id(("work", from))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .h(px(34.))
+                            .px_3()
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(border)
+                            .text_sm()
+                            .text_color(muted)
+                            .cursor_pointer()
+                            .hover(|d| d.bg(muted.opacity(0.06)).text_color(fg))
+                            // A spinner and a shimmer read as "still going"; a
+                            // green dot read as done.
+                            // Motion lives in the pill alone: an animation here
+                            // would redraw the whole story every frame.
+                            .child(if live {
+                                Icon::new(IconName::CircleDot)
+                                    .size(px(14.))
+                                    .text_color(accent)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::ListChecks)
+                                    .size(px(14.))
+                                    .into_any_element()
+                            })
+                            .child(if live {
+                                div()
+                                    .flex_1()
+                                    .text_color(accent)
+                                    .child(title)
+                                    .into_any_element()
+                            } else {
+                                div().flex_1().child(title).into_any_element()
+                            })
+                            .child(
+                                Icon::new(if open {
+                                    IconName::ChevronDown
                                 } else {
-                                    Icon::new(IconName::ListChecks).size(px(14.)).into_any_element()
+                                    IconName::ChevronRight
                                 })
-                                .child(if live {
-                                    div().flex_1().text_color(accent).child(title).into_any_element()
-                                } else {
-                                    div().flex_1().child(title).into_any_element()
-                                })
-                                .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size(px(14.)))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(s) = &mut this.session
-                                        && !s.open.remove(&from)
-                                    {
-                                        s.open.insert(from);
-                                    }
-                                    cx.notify();
-                                })),
-                        );
-                        if open {
-                            let mut list = div().ml(px(18.)).mt_1().pl_4().border_l_1().border_color(border).flex().flex_col().gap_0p5().py_1();
-                            for j in from..to {
-                                let e = &entries[j];
-                                let key = j + 1_000_000;
-                                let expanded = s.open.contains(&key);
-                                let row = if e.kind == Kind::Thinking {
+                                .size(px(14.)),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(s) = &mut this.session
+                                    && !s.open.remove(&from)
+                                {
+                                    s.open.insert(from);
+                                }
+                                cx.notify();
+                            })),
+                    );
+                    if open {
+                        let mut list = div()
+                            .ml(px(18.))
+                            .mt_1()
+                            .pl_4()
+                            .border_l_1()
+                            .border_color(border)
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .py_1();
+                        for j in from..to {
+                            let e = &entries[j];
+                            let key = j + 1_000_000;
+                            let expanded = s.open.contains(&key);
+                            let row =
+                                if e.kind == Kind::Thinking {
                                     let next = entries.get(j + 1).map(|x| x.at).unwrap_or(e.at);
-                                    let label = if e.at > 0 && next > e.at { format!("Thought for {}", span(next - e.at)) } else { "Thought".into() };
+                                    let label = if e.at > 0 && next > e.at {
+                                        format!("Thought for {}", span(next - e.at))
+                                    } else {
+                                        "Thought".into()
+                                    };
                                     div()
                                         .flex()
                                         .flex_col()
@@ -623,7 +843,15 @@ impl KuzgunApp {
                                                 })),
                                         )
                                         .when(expanded, |d| {
-                                            d.child(div().ml(px(21.)).mb_1().text_sm().italic().text_color(muted).child(e.text.clone()))
+                                            d.child(
+                                                div()
+                                                    .ml(px(21.))
+                                                    .mb_1()
+                                                    .text_sm()
+                                                    .italic()
+                                                    .text_color(muted)
+                                                    .child(e.text.clone()),
+                                            )
                                         })
                                         .into_any_element()
                                 } else {
@@ -645,12 +873,25 @@ impl KuzgunApp {
                                                 .text_sm()
                                                 .hover(|d| d.bg(muted.opacity(0.06)))
                                                 .child(if busy {
-                                                    Icon::new(IconName::CircleDot).size(px(13.)).text_color(accent).into_any_element()
+                                                    Icon::new(IconName::CircleDot)
+                                                        .size(px(13.))
+                                                        .text_color(accent)
+                                                        .into_any_element()
                                                 } else {
-                                                    Icon::new(icon).size(px(13.)).text_color(muted).into_any_element()
+                                                    Icon::new(icon)
+                                                        .size(px(13.))
+                                                        .text_color(muted)
+                                                        .into_any_element()
                                                 })
                                                 .child(div().flex_none().text_color(fg).child(verb))
-                                                .child(div().flex_1().min_w_0().truncate().text_color(muted).child(target))
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_color(muted)
+                                                        .child(target),
+                                                )
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     if let Some(s) = &mut this.session
                                                         && !s.open.remove(&key)
@@ -671,49 +912,47 @@ impl KuzgunApp {
                                                     .text_xs()
                                                     .font_family(crate::settings::mono_font())
                                                     .text_color(fg)
-                                                    .child(e.output.clone().unwrap_or_else(|| "No output yet.".into())),
+                                                    .child(e.output.clone().unwrap_or_else(|| {
+                                                        "No output yet.".into()
+                                                    })),
                                             )
                                         })
                                         .into_any_element()
                                 };
-                                list = list.child(row);
-                            }
-                            block = block.child(list);
+                            list = list.child(row);
                         }
-                        story.push(block.into_any_element());
-                        // The files this block changed, as one card.
-                        let mut touched: Vec<(String, usize, usize)> = Vec::new();
-                        for e in &entries[from..to] {
-                            for ed in &e.edits {
-                                let name = self.session_rel(&ed.path);
-                                match touched.iter_mut().find(|t| t.0 == name) {
-                                    Some(t) => {
-                                        t.1 += ed.added;
-                                        t.2 += ed.removed;
-                                    }
-                                    None => touched.push((name, ed.added, ed.removed)),
+                        block = block.child(list);
+                    }
+                    story.push(block.into_any_element());
+                    // The files this block changed, as one card.
+                    let mut touched: Vec<(String, usize, usize)> = Vec::new();
+                    for e in &entries[from..to] {
+                        for ed in &e.edits {
+                            let name = self.session_rel(&ed.path);
+                            match touched.iter_mut().find(|t| t.0 == name) {
+                                Some(t) => {
+                                    t.1 += ed.added;
+                                    t.2 += ed.removed;
                                 }
+                                None => touched.push((name, ed.added, ed.removed)),
                             }
                         }
-                        if !touched.is_empty() {
-                            let n = touched.len();
-                            story.push(
-                                div()
-                                    .ml(px(18.))
-                                    .flex()
-                                    .flex_col()
-                                    .rounded(px(8.))
-                                    .border_1()
-                                    .border_color(border)
-                                    .child(
-                                        div()
-                                            .px_3()
-                                            .py_1p5()
-                                            .text_xs()
-                                            .text_color(muted)
-                                            .child(format!("{n} file{} changed", if n == 1 { "" } else { "s" })),
-                                    )
-                                    .children(touched.into_iter().enumerate().map(|(k, (name, a, r))| {
+                    }
+                    if !touched.is_empty() {
+                        let n = touched.len();
+                        story.push(
+                            div()
+                                .ml(px(18.))
+                                .flex()
+                                .flex_col()
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(border)
+                                .child(div().px_3().py_1p5().text_xs().text_color(muted).child(
+                                    format!("{n} file{} changed", if n == 1 { "" } else { "s" }),
+                                ))
+                                .children(touched.into_iter().enumerate().map(
+                                    |(k, (name, a, r))| {
                                         let pick = name.clone();
                                         div()
                                             .id(("touched", from * 1000 + k))
@@ -727,21 +966,51 @@ impl KuzgunApp {
                                             .cursor_pointer()
                                             .hover(|d| d.bg(muted.opacity(0.06)))
                                             .text_sm()
-                                            .child(Icon::new(IconName::FilePen).size(px(13.)).text_color(muted))
-                                            .child(div().flex_1().min_w_0().truncate().font_family(crate::settings::mono_font()).text_color(fg).child(name))
-                                            .child(div().text_xs().text_color(theme.green).child(format!("+{a}")))
-                                            .child(div().text_xs().text_color(theme.red).child(format!("−{r}")))
-                                            .on_click(cx.listener(move |this, _, _, cx| this.select_file(pick.clone(), false, cx)))
-                                    }))
-                                    .into_any_element(),
-                            );
-                        }
+                                            .child(
+                                                Icon::new(IconName::FilePen)
+                                                    .size(px(13.))
+                                                    .text_color(muted),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .font_family(crate::settings::mono_font())
+                                                    .text_color(fg)
+                                                    .child(name),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.green)
+                                                    .child(format!("+{a}")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.red)
+                                                    .child(format!("−{r}")),
+                                            )
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.select_file(pick.clone(), false, cx)
+                                            }))
+                                    },
+                                ))
+                                .into_any_element(),
+                        );
                     }
                 }
-            
+            }
         } else {
-        if entries.is_empty() {
-                story.push(div().text_sm().text_color(muted).child("Reading the conversation…").into_any_element());
+            if entries.is_empty() {
+                story.push(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("Reading the conversation…")
+                        .into_any_element(),
+                );
             } else if running && !matches!(all.last(), Some(Item::Work(..))) {
                 story.push(
                     div()
@@ -750,7 +1019,11 @@ impl KuzgunApp {
                         .gap_2()
                         .text_sm()
                         .text_color(muted)
-                        .child(Icon::new(IconName::CircleDot).size(px(13.)).text_color(accent))
+                        .child(
+                            Icon::new(IconName::CircleDot)
+                                .size(px(13.))
+                                .text_color(accent),
+                        )
                         .child(div().text_color(accent).child("Working…"))
                         .into_any_element(),
                 );
@@ -764,12 +1037,21 @@ impl KuzgunApp {
                         .text_xs()
                         .text_color(muted)
                         .child(Icon::new(IconName::CircleCheck).size(px(13.)))
-                        .child(format!("Stopped {} · ran {}", ago_label(now - r.last_activity), span(r.last_activity - r.started)))
+                        .child(format!(
+                            "Stopped {} · ran {}",
+                            ago_label(now - r.last_activity),
+                            span(r.last_activity - r.started)
+                        ))
                         .into_any_element(),
                 );
             }
         }
-        gap(div().flex().flex_col().gap_4().children(story).into_any_element())
+        gap(div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .children(story)
+            .into_any_element())
     }
 
     pub fn render_session(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -784,14 +1066,17 @@ impl KuzgunApp {
         let now = now_unix();
         let tk = &self.board.tickets[ix];
         let runs = self.runs_of(ix);
-        let run = runs.iter().find(|r| r.transcript == s.run).or(runs.first()).cloned();
+        let run = runs
+            .iter()
+            .find(|r| r.transcript == s.run)
+            .or(runs.first())
+            .cloned();
         let entries: &[Entry] = run
             .as_ref()
             .and_then(|r| self.conversations.get(&r.transcript))
             .map(|c| c.transcript.entries.as_slice())
             .unwrap_or(&[]);
         let running = run.as_ref().is_some_and(|r| r.state == RunState::Running);
-
 
         // ---- header: back, ticket, run cards ----
         let ticket_path = s.ticket.clone();
@@ -815,7 +1100,16 @@ impl KuzgunApp {
                         this.open_detail(ticket_path.clone(), true, w, cx);
                     })),
             )
-            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(fg).child(tk.title.clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg)
+                    .child(tk.title.clone()),
+            )
             .child({
                 let tab = s.tab;
                 let n = s.files.snap.as_ref().map(|x| x.changes.len());
@@ -839,57 +1133,111 @@ impl KuzgunApp {
                     .flex()
                     .gap_1()
                     .child(seg("session-tab-story", "Session".into(), Tab::Session))
-                    .child(seg("session-tab-files", match n { Some(n) if n > 0 => format!("Files · {n} changed"), _ => "Files".into() }, Tab::Files))
+                    .child(seg(
+                        "session-tab-files",
+                        match n {
+                            Some(n) if n > 0 => format!("Files · {n} changed"),
+                            _ => "Files".into(),
+                        },
+                        Tab::Files,
+                    ))
             });
 
         // ---- the story: a virtual list, so a scroll draws only what shows ----
         let rows = 1 + items(entries).len() + 1;
         let view = cx.entity().downgrade();
-        let conv = run.as_ref().and_then(|r| self.conversations.get(&r.transcript));
+        let conv = run
+            .as_ref()
+            .and_then(|r| self.conversations.get(&r.transcript));
         // A command whose end was never reported is dead once its session
         // has been quiet for two hours.
-        let fresh = run.as_ref().is_some_and(|r| now - r.last_activity <= BACKGROUND_TTL);
+        let fresh = run
+            .as_ref()
+            .is_some_and(|r| now - r.last_activity <= BACKGROUND_TTL);
         let background: Vec<crate::transcript::Background> = conv
             .filter(|_| fresh)
-            .map(|c| c.transcript.background.iter().filter(|b| !b.done).cloned().collect())
+            .map(|c| {
+                c.transcript
+                    .background
+                    .iter()
+                    .filter(|b| !b.done)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         let entries_bg_open = !background.is_empty();
-        let changed_list = s.files.snap.as_ref().filter(|x| !x.changes.is_empty()).map(|x| {
-            let theme = theme.clone();
-            div()
-                .flex()
-                .flex_col()
-                .pt_3()
-                .child(div().pb_1().text_xs().font_weight(FontWeight::MEDIUM).text_color(muted).child(format!("CHANGED FILES · {}", x.changes.len())))
-                .children(x.changes.iter().take(40).enumerate().map(|(k, c)| {
-                    let pick = c.path.clone();
-                    let color = match c.status {
-                        'A' => theme.green,
-                        'D' => theme.red,
-                        _ => theme.yellow,
-                    };
+        let changed_list =
+            s.files
+                .snap
+                .as_ref()
+                .filter(|x| !x.changes.is_empty())
+                .map(|x| {
+                    let theme = theme.clone();
                     div()
-                        .id(("rail-change", k))
                         .flex()
-                        .items_center()
-                        .gap_2()
-                        .h(px(26.))
-                        .px_1()
-                        .rounded(px(4.))
-                        .cursor_pointer()
-                        .hover(|d| d.bg(muted.opacity(0.08)))
-                        .text_sm()
-                        .child(div().w(px(10.)).text_xs().font_family(crate::settings::mono_font()).text_color(color).child(c.status.to_string()))
-                        .child(div().flex_1().min_w_0().truncate().text_color(fg).child(c.path.rsplit('/').next().unwrap_or(&c.path).to_string()))
-                        .child(div().text_xs().text_color(theme.green).child(format!("+{}", c.added)))
-                        .child(div().text_xs().text_color(theme.red).child(format!("−{}", c.removed)))
-                        .tooltip({
-                            let p = c.path.clone();
-                            move |w, cx| gpui_kit::component::tooltip::Tooltip::new(p.clone()).build(w, cx)
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| this.select_file(pick.clone(), false, cx)))
-                }))
-        });
+                        .flex_col()
+                        .pt_3()
+                        .child(
+                            div()
+                                .pb_1()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(muted)
+                                .child(format!("CHANGED FILES · {}", x.changes.len())),
+                        )
+                        .children(x.changes.iter().take(40).enumerate().map(|(k, c)| {
+                            let pick = c.path.clone();
+                            let color = match c.status {
+                                'A' => theme.green,
+                                'D' => theme.red,
+                                _ => theme.yellow,
+                            };
+                            div()
+                                .id(("rail-change", k))
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .h(px(26.))
+                                .px_1()
+                                .rounded(px(4.))
+                                .cursor_pointer()
+                                .hover(|d| d.bg(muted.opacity(0.08)))
+                                .text_sm()
+                                .child(
+                                    div()
+                                        .w(px(10.))
+                                        .text_xs()
+                                        .font_family(crate::settings::mono_font())
+                                        .text_color(color)
+                                        .child(c.status.to_string()),
+                                )
+                                .child(div().flex_1().min_w_0().truncate().text_color(fg).child(
+                                    c.path.rsplit('/').next().unwrap_or(&c.path).to_string(),
+                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.green)
+                                        .child(format!("+{}", c.added)),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.red)
+                                        .child(format!("−{}", c.removed)),
+                                )
+                                .tooltip({
+                                    let p = c.path.clone();
+                                    move |w, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(p.clone())
+                                            .build(w, cx)
+                                    }
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select_file(pick.clone(), false, cx)
+                                }))
+                        }))
+                });
         // ---- right rail: facts and actions ----
         let rail = run.as_ref().map(|r| {
             let tools: Vec<&Entry> = entries.iter().filter(|e| e.kind == Kind::Tool).collect();
@@ -906,8 +1254,21 @@ impl KuzgunApp {
                     .h(px(30.))
                     .gap_2()
                     .text_sm()
-                    .child(div().w(px(96.)).flex_none().text_color(muted).child(label.to_string()))
-                    .child(div().flex_1().min_w_0().truncate().text_color(fg).child(value))
+                    .child(
+                        div()
+                            .w(px(96.))
+                            .flex_none()
+                            .text_color(muted)
+                            .child(label.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(fg)
+                            .child(value),
+                    )
             };
             let waiting = r.state != RunState::Running && entries_bg_open;
             let state = match r.state {
@@ -929,7 +1290,14 @@ impl KuzgunApp {
                 .p_4()
                 .border_l_1()
                 .border_color(border)
-                .child(div().pb_1().text_xs().font_weight(FontWeight::MEDIUM).text_color(muted).child("SESSION"))
+                .child(
+                    div()
+                        .pb_1()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(muted)
+                        .child("SESSION"),
+                )
                 .child(fact("Status", state.into()))
                 .child(
                     div()
@@ -938,7 +1306,13 @@ impl KuzgunApp {
                         .h(px(30.))
                         .gap_2()
                         .text_sm()
-                        .child(div().w(px(96.)).flex_none().text_color(muted).child("Harness"))
+                        .child(
+                            div()
+                                .w(px(96.))
+                                .flex_none()
+                                .text_color(muted)
+                                .child("Harness"),
+                        )
                         .child(crate::icons::harness_logo(r.provider, 16.))
                         .child(div().text_color(fg).child(r.provider.label())),
                 )
@@ -948,7 +1322,12 @@ impl KuzgunApp {
                 .child(fact("Steps", tools.len().to_string()))
                 .child(fact("Files edited", edited.len().to_string()))
                 .child(fact("Commands", ran.to_string()))
-                .when_some(worktree.clone(), |d, w| d.child(fact("Worktree", repo_relative(&w).trim_end_matches('/').to_string())))
+                .when_some(worktree.clone(), |d, w| {
+                    d.child(fact(
+                        "Worktree",
+                        repo_relative(&w).trim_end_matches('/').to_string(),
+                    ))
+                })
                 .children(changed_list)
                 .child(div().h(px(12.)))
                 .child(
@@ -962,11 +1341,19 @@ impl KuzgunApp {
                                     .w_full()
                                     .when(follow, |b| b.primary())
                                     .icon(Icon::new(IconName::ArrowRight))
-                                    .label(if follow { "Following live" } else { "Follow live" })
+                                    .label(if follow {
+                                        "Following live"
+                                    } else {
+                                        "Follow live"
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(s) = &mut this.session {
                                             s.follow = !s.follow;
-                                            s.list.set_follow_mode(if s.follow { FollowMode::Tail } else { FollowMode::Normal });
+                                            s.list.set_follow_mode(if s.follow {
+                                                FollowMode::Tail
+                                            } else {
+                                                FollowMode::Normal
+                                            });
                                         }
                                         cx.notify();
                                     })),
@@ -979,7 +1366,9 @@ impl KuzgunApp {
                                     .icon(Icon::new(IconName::Terminal))
                                     .label("Copy resume command")
                                     .tooltip(cmd.clone())
-                                    .on_click(cx.listener(move |this, _, _, cx| this.copy("resume command", cmd.clone(), cx))),
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.copy("resume command", cmd.clone(), cx)
+                                    })),
                             )
                         })
                         .when_some(worktree, |d, w| {
@@ -1016,7 +1405,15 @@ impl KuzgunApp {
         }
         if self.session.as_ref().is_some_and(|s| s.tab == Tab::Files) {
             let files = self.render_files(window, cx);
-            return div().flex_1().min_w_0().min_h_0().flex().flex_col().child(header).child(files).into_any_element();
+            return div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(header)
+                .child(files)
+                .into_any_element();
         }
         div()
             .flex_1()
@@ -1030,8 +1427,7 @@ impl KuzgunApp {
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(
-                        div().flex_1().min_w_0().relative().flex().flex_col().child(
+                    .child(div().flex_1().min_w_0().relative().flex().flex_col().child(
                         div().flex_1().min_h_0().children(state.map(|state| {
                             list(state, move |i, _window, cx| {
                                 view.update(cx, |this, cx| {
@@ -1042,15 +1438,22 @@ impl KuzgunApp {
                                         .px_8()
                                         .when(i == 0, |d| d.pt_6())
                                         .when(i + 1 == rows, |d| d.pb(px(96.)))
-                                        .child(div().w_full().min_w_0().max_w(px(780.)).flex().flex_col().child(this.story_row(i, cx)))
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .min_w_0()
+                                                .max_w(px(780.))
+                                                .flex()
+                                                .flex_col()
+                                                .child(this.story_row(i, cx)),
+                                        )
                                         .into_any_element()
                                 })
                                 .unwrap_or_else(|_| div().into_any_element())
                             })
                             .size_full()
                         })),
-                        ),
-                    )
+                    ))
                     .children(rail),
             )
             .into_any_element()

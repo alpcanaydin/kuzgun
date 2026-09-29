@@ -1,0 +1,130 @@
+name: ci
+
+# Quoted because YAML 1.1 reads a bare `on` as a boolean.
+'on':
+  pull_request:
+    # `ready_for_review` starts the first run of a draft that becomes ready.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # A pull request that changes only docs skips the Rust job.
+  changes:
+    name: Changes
+    # A draft runs no job.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the paths filter lists the files of the pull request
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - name: Find a change outside the docs
+        id: changes
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+
+  static:
+    name: Static
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.result == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Betterleaks reads each commit of the pull request.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # mise.toml pins the versions.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      # Each check runs even when an earlier one fails, so one run reports all.
+      - name: Workflows
+        run: mise exec -- actionlint
+
+      - name: Workflow security
+        if: ${{ !cancelled() }}
+        run: mise exec -- zizmor --min-severity medium .github/workflows
+        env:
+          # zizmor runs its online audits with a token.
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Shell scripts
+        if: ${{ !cancelled() }}
+        run: mise exec -- shellcheck --severity=warning scripts/*.sh .github/scripts/*.sh
+
+      - name: Secrets in the pull request
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: mise exec -- betterleaks git --no-banner --redact --log-opts="$BASE_SHA..$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+  rust:
+    name: Rust
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.code == 'true') }}
+    # GPUI renders with Metal: the app builds and tests on macOS.
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      # No debug info in CI: faster compiles and links, a smaller cache.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # rust-toolchain.toml pins the version and components.
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Pull requests read the cache that main writes.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: cargo test --locked
+
+  # The one check that the ruleset of main requires.
+  gate:
+    name: gate
+    needs: [changes, static, rust]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          # A push to main has no changes job; a docs-only change skips the Rust job.
+          allowed-skips: changes, rust
+          jobs: ${{ toJSON(needs) }}

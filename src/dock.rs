@@ -9,8 +9,8 @@ pub fn set_icon() {
     use objc2_app_kit::{NSApplication, NSImage};
     use objc2_foundation::NSData;
 
-    let in_bundle = std::env::current_exe()
-        .is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
+    let in_bundle =
+        std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
     if in_bundle {
         return;
     }

@@ -56,7 +56,15 @@ pub enum Quick {
 }
 
 impl Quick {
-    pub const ALL: [Quick; 7] = [Quick::All, Quick::Recent, Quick::Frontier, Quick::Blocked, Quick::Agent, Quick::Human, Quick::Attention];
+    pub const ALL: [Quick; 7] = [
+        Quick::All,
+        Quick::Recent,
+        Quick::Frontier,
+        Quick::Blocked,
+        Quick::Agent,
+        Quick::Human,
+        Quick::Attention,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Quick::All => "All",
@@ -89,13 +97,18 @@ impl Quick {
     pub fn count_in(self, app: &KuzgunApp) -> usize {
         if self == Quick::Recent {
             let now = now_unix();
-            return (0..app.board.tickets.len()).filter(|&i| now - app.updated_at(i) <= 86_400).count();
+            return (0..app.board.tickets.len())
+                .filter(|&i| now - app.updated_at(i) <= 86_400)
+                .count();
         }
         self.count(&app.idx)
     }
 }
 
 /// The derived column of unstarted tickets that wait on open blockers.
+/// Virtual list states by list key, with the ticket rows they show.
+pub type ListCache = HashMap<String, (ListState, std::rc::Rc<Vec<usize>>)>;
+
 /// One agent conversation and the markdown views of its messages.
 #[derive(Default)]
 pub struct Conversation {
@@ -159,7 +172,7 @@ pub struct KuzgunApp {
     /// Per-board facts computed once per load (render reads these).
     pub idx: Index,
     /// Virtualized card lists, one per column status.
-    pub lists: std::cell::RefCell<HashMap<String, (ListState, std::rc::Rc<Vec<usize>>)>>,
+    pub lists: std::cell::RefCell<ListCache>,
     /// Card layout inputs; a change remeasures the lists.
     pub layout_sig: std::cell::Cell<u64>,
     pub search: Entity<InputState>,
@@ -226,14 +239,18 @@ impl KuzgunApp {
         let search = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Filter by title, key, status, label…")
         });
-        let sub = cx.subscribe_in(&search, window, |this, _, ev: &InputEvent, window, cx| match ev {
-            InputEvent::Change => cx.notify(),
-            InputEvent::PressEnter { .. } => {
-                this.select_first_visible(cx);
-                this.board_focus.focus(window, cx);
-            }
-            _ => {}
-        });
+        let sub = cx.subscribe_in(
+            &search,
+            window,
+            |this, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
+                    this.select_first_visible(cx);
+                    this.board_focus.focus(window, cx);
+                }
+                _ => {}
+            },
+        );
         Self {
             focus: cx.focus_handle(),
             board_focus: cx.focus_handle(),
@@ -461,9 +478,12 @@ impl KuzgunApp {
     fn start_tick(&mut self, cx: &mut Context<Self>) {
         self._tick = Some(cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(1000)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(1000))
+                    .await;
                 let alive = this.update(cx, |this, cx| {
-                    this.flash.retain(|_, t| t.elapsed() < Duration::from_millis(2600));
+                    this.flash
+                        .retain(|_, t| t.elapsed() < Duration::from_millis(2600));
                     cx.notify();
                 });
                 if alive.is_err() {
@@ -483,7 +503,9 @@ impl KuzgunApp {
         self.history_loaded = false;
         let r = repo.clone();
         self._history_task = Some(cx.spawn(async move |this, cx| {
-            let runs = cx.background_spawn(async move { crate::agents::history(&r) }).await;
+            let runs = cx
+                .background_spawn(async move { crate::agents::history(&r) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 this.history_runs = runs;
                 this.history_loaded = true;
@@ -493,15 +515,24 @@ impl KuzgunApp {
         self._agents_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 let r = repo.clone();
-                let runs = cx.background_spawn(async move { crate::agents::scan(&r) }).await;
+                let runs = cx
+                    .background_spawn(async move { crate::agents::scan(&r) })
+                    .await;
                 if std::env::var_os("KUZGUN_DEBUG_AGENTS").is_some() {
                     for r in &runs {
-                        eprintln!("agent {:?} {} {}", r.state, r.ticket_rel, r.transcript.display());
+                        eprintln!(
+                            "agent {:?} {} {}",
+                            r.state,
+                            r.ticket_rel,
+                            r.transcript.display()
+                        );
                     }
                 }
                 let alive = this.update(cx, |this, cx| {
                     let key = |v: &[crate::agents::AgentRun]| {
-                        v.iter().map(|r| (r.ticket_rel.clone(), r.state, r.last_activity / 30)).collect::<Vec<_>>()
+                        v.iter()
+                            .map(|r| (r.ticket_rel.clone(), r.state, r.last_activity / 30))
+                            .collect::<Vec<_>>()
                     };
                     if key(&runs) != key(&this.agent_runs) {
                         this.agent_runs = runs;
@@ -519,7 +550,11 @@ impl KuzgunApp {
                     }
                     // An old ticket's runs come from the history scan: wait for it.
                     let ready = this.history_loaded
-                        || this.pending_session.as_ref().and_then(|p| this.board.find_path(p)).is_some_and(|i| !this.runs_of(i).is_empty());
+                        || this
+                            .pending_session
+                            .as_ref()
+                            .and_then(|p| this.board.find_path(p))
+                            .is_some_and(|i| !this.runs_of(i).is_empty());
                     if let Some(p) = this.pending_session.take_if(|_| ready) {
                         this.open_session(p, cx);
                         if std::mem::take(&mut this.pending_files)
@@ -553,7 +588,11 @@ impl KuzgunApp {
     /// Open projects a ticket waits on through a spec or map link.
     pub fn blocking_projects(&self, ix: usize) -> Vec<usize> {
         let mut out: Vec<usize> = Vec::new();
-        for p in self.board.tickets[ix].blocked_refs.iter().filter_map(|r| r.project) {
+        for p in self.board.tickets[ix]
+            .blocked_refs
+            .iter()
+            .filter_map(|r| r.project)
+        {
             if self.board.project_open(p) && !out.contains(&p) {
                 out.push(p);
             }
@@ -576,13 +615,27 @@ impl KuzgunApp {
             start[t.project] = start[t.project].min(at);
         }
         let mut order: Vec<usize> = (0..self.board.projects.len()).collect();
-        order.sort_by_key(|&p| (std::cmp::Reverse(if start[p] == i64::MAX { i64::MIN } else { start[p] }), p));
+        order.sort_by_key(|&p| {
+            (
+                std::cmp::Reverse(if start[p] == i64::MAX {
+                    i64::MIN
+                } else {
+                    start[p]
+                }),
+                p,
+            )
+        });
         order
     }
 
     /// Every ticket of the project is closed.
     pub fn project_finished(&self, p: usize) -> bool {
-        let mut it = self.board.tickets.iter().filter(|t| t.project == p).peekable();
+        let mut it = self
+            .board
+            .tickets
+            .iter()
+            .filter(|t| t.project == p)
+            .peekable();
         it.peek().is_some() && it.all(|t| t.category.is_closed())
     }
 
@@ -597,15 +650,28 @@ impl KuzgunApp {
 
     /// Agent runs on a ticket: running first, then by last activity.
     pub fn runs_of(&self, ix: usize) -> Vec<crate::agents::AgentRun> {
-        let mut runs: Vec<crate::agents::AgentRun> =
-            self.agent_runs.iter().filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix)).cloned().collect();
-        for r in self.history_runs.iter().filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix)) {
+        let mut runs: Vec<crate::agents::AgentRun> = self
+            .agent_runs
+            .iter()
+            .filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix))
+            .cloned()
+            .collect();
+        for r in self
+            .history_runs
+            .iter()
+            .filter(|r| self.run_ticket(&r.ticket_rel) == Some(ix))
+        {
             if !runs.iter().any(|x| x.transcript == r.transcript) {
                 runs.push(r.clone());
             }
         }
         // A running agent first, then the latest activity.
-        runs.sort_by_key(|r| (r.state != crate::agents::RunState::Running, std::cmp::Reverse(r.last_activity)));
+        runs.sort_by_key(|r| {
+            (
+                r.state != crate::agents::RunState::Running,
+                std::cmp::Reverse(r.last_activity),
+            )
+        });
         runs
     }
 
@@ -614,16 +680,25 @@ impl KuzgunApp {
     pub fn refresh_conversations(&mut self, cx: &mut Context<Self>) -> bool {
         let tickets: Vec<usize> = [
             self.session.as_ref().map(|s| s.ticket.clone()),
-            self.detail.as_ref().filter(|d| !d.is_doc).map(|d| d.path.clone()),
+            self.detail
+                .as_ref()
+                .filter(|d| !d.is_doc)
+                .map(|d| d.path.clone()),
         ]
         .into_iter()
         .flatten()
         .filter_map(|p| self.board.find_path(&p))
         .collect();
         let mut changed = false;
-        let runs: Vec<crate::agents::AgentRun> = tickets.into_iter().flat_map(|ix| self.runs_of(ix)).collect();
+        let runs: Vec<crate::agents::AgentRun> = tickets
+            .into_iter()
+            .flat_map(|ix| self.runs_of(ix))
+            .collect();
         for run in runs {
-            let c = self.conversations.entry(run.transcript.clone()).or_default();
+            let c = self
+                .conversations
+                .entry(run.transcript.clone())
+                .or_default();
             let quiet = now_unix() - run.last_activity > 2 * 3600;
             for b in c.transcript.background.iter().filter(|b| !b.done && !quiet) {
                 let t = tail(&b.output, 30);
@@ -636,8 +711,11 @@ impl KuzgunApp {
                 changed = true;
                 for i in c.md.len()..c.transcript.entries.len() {
                     let e = &c.transcript.entries[i];
-                    let md = matches!(e.kind, crate::transcript::Kind::User | crate::transcript::Kind::Assistant)
-                        .then(|| cx.new(|cx| TextViewState::markdown(&e.text, cx)));
+                    let md = matches!(
+                        e.kind,
+                        crate::transcript::Kind::User | crate::transcript::Kind::Assistant
+                    )
+                    .then(|| cx.new(|cx| TextViewState::markdown(&e.text, cx)));
                     c.md.push(md);
                 }
             }
@@ -655,7 +733,10 @@ impl KuzgunApp {
             let target = canon(&repo.join(name));
             return tickets.iter().position(|t| canon(&t.path) == target);
         }
-        if let Some(i) = tickets.iter().position(|t| t.key.eq_ignore_ascii_case(name)) {
+        if let Some(i) = tickets
+            .iter()
+            .position(|t| t.key.eq_ignore_ascii_case(name))
+        {
             return Some(i);
         }
         let n: u32 = name.parse().ok()?;
@@ -676,7 +757,11 @@ impl KuzgunApp {
             }
         }
         {
-            let found: Vec<Option<usize>> = self.agent_runs.iter().map(|r| self.run_ticket(&r.ticket_rel)).collect();
+            let found: Vec<Option<usize>> = self
+                .agent_runs
+                .iter()
+                .map(|r| self.run_ticket(&r.ticket_rel))
+                .collect();
             for (run, ix) in self.agent_runs.iter().zip(found) {
                 let Some(t) = ix.map(|i| &mut self.board.tickets[i]) else {
                     continue;
@@ -686,13 +771,21 @@ impl KuzgunApp {
                 }
                 if !t.category.is_closed() {
                     let (key, cat, why) = match run.state {
-                        crate::agents::RunState::Running => ("in-progress", Category::InProgress, "An agent is working on it"),
-                        crate::agents::RunState::AwaitingReview => {
-                            ("in-review", Category::InReview, "Its agent finished; the worktree waits on review")
-                        }
-                        crate::agents::RunState::Finished => {
-                            ("done", Category::Done, "Its agent finished and the worktree is gone: the work landed")
-                        }
+                        crate::agents::RunState::Running => (
+                            "in-progress",
+                            Category::InProgress,
+                            "An agent is working on it",
+                        ),
+                        crate::agents::RunState::AwaitingReview => (
+                            "in-review",
+                            Category::InReview,
+                            "Its agent finished; the worktree waits on review",
+                        ),
+                        crate::agents::RunState::Finished => (
+                            "done",
+                            Category::Done,
+                            "Its agent finished and the worktree is gone: the work landed",
+                        ),
                     };
                     t.status_key = key.into();
                     t.category = cat;
@@ -733,7 +826,13 @@ impl KuzgunApp {
         cx.notify();
     }
 
-    fn apply_board(&mut self, board: Board, changed: &[PathBuf], first: bool, cx: &mut Context<Self>) {
+    fn apply_board(
+        &mut self,
+        board: Board,
+        changed: &[PathBuf],
+        first: bool,
+        cx: &mut Context<Self>,
+    ) {
         // Which tickets really changed (the watcher also reports our own
         // writes and touches): compare the text.
         let old: HashMap<&Path, &str> = self
@@ -770,7 +869,11 @@ impl KuzgunApp {
         }
         if first {
             self.saved = store::touch_board(&self.board.root, self.board.tickets.len());
-            if self.selected.as_ref().is_some_and(|p| self.board.find_path(p).is_none()) {
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|p| self.board.find_path(p).is_none())
+            {
                 self.selected = None;
             }
         }
@@ -784,7 +887,11 @@ impl KuzgunApp {
             self.load_ages(cx);
         }
         if let Some(key) = self.pending_ticket.take()
-            && let Some(t) = self.board.tickets.iter().find(|t| t.key.eq_ignore_ascii_case(&key))
+            && let Some(t) = self
+                .board
+                .tickets
+                .iter()
+                .find(|t| t.key.eq_ignore_ascii_case(&key))
         {
             // Opened on its agent session when it has one.
             self.nav_back.clear();
@@ -806,7 +913,9 @@ impl KuzgunApp {
         };
         self._ages_task = Some(cx.spawn(async move |this, cx| {
             let r = root.clone();
-            let ages = cx.background_spawn(async move { crate::git::board_ages(&r) }).await;
+            let ages = cx
+                .background_spawn(async move { crate::git::board_ages(&r) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.root.as_deref() == Some(root.as_path()) {
                     this.ages = ages;
@@ -841,17 +950,30 @@ impl KuzgunApp {
         let t = &self.board.tickets[i];
         // Someone is on it, it waits on review, or it is closed: nothing to
         // hand over.
-        if t.category.is_closed() || matches!(t.category, Category::InProgress | Category::InReview) {
+        if t.category.is_closed() || matches!(t.category, Category::InProgress | Category::InReview)
+        {
             return None;
         }
         let rel = repo_relative(&t.path);
         let project = &self.board.projects[t.project];
         let (skill, cmd, why) = if let Some(map) = &project.map {
-            ("wayfinder", format!("/wayfinder {} {rel}", repo_relative(&map.path)), "Resolve this decision on the map")
+            (
+                "wayfinder",
+                format!("/wayfinder {} {rel}", repo_relative(&map.path)),
+                "Resolve this decision on the map",
+            )
         } else if t.category == Category::Backlog {
-            ("triage", format!("/triage {rel}"), "Triage it into a ready ticket")
+            (
+                "triage",
+                format!("/triage {rel}"),
+                "Triage it into a ready ticket",
+            )
         } else {
-            ("implement", format!("/implement {rel}"), "Hand it to an agent to build")
+            (
+                "implement",
+                format!("/implement {rel}"),
+                "Hand it to an agent to build",
+            )
         };
         self.skill_installed(skill).then_some((skill, cmd, why))
     }
@@ -868,8 +990,15 @@ impl KuzgunApp {
     /// Starts a Claude Code session on the ticket's suggested command in
     /// the chosen terminal, in the repo folder.
     pub fn start_agent(&mut self, path: &Path, _cx: &mut Context<Self>) {
-        let Some((_, cmd, _)) = self.board.find_path(path).and_then(|i| self.next_command(i)) else {
-            self.toast(None, "Nothing to hand to an agent: it is in progress, in review or closed.");
+        let Some((_, cmd, _)) = self
+            .board
+            .find_path(path)
+            .and_then(|i| self.next_command(i))
+        else {
+            self.toast(
+                None,
+                "Nothing to hand to an agent: it is in progress, in review or closed.",
+            );
             return;
         };
         let Some(repo) = self.root.as_deref().and_then(crate::agents::repo_root) else {
@@ -884,9 +1013,16 @@ impl KuzgunApp {
 
     /// Copies the next command of a ticket (the `i` key).
     pub fn copy_next(&mut self, path: &Path, cx: &mut Context<Self>) {
-        match self.board.find_path(path).and_then(|i| self.next_command(i)) {
+        match self
+            .board
+            .find_path(path)
+            .and_then(|i| self.next_command(i))
+        {
             Some((_, cmd, _)) => self.copy("command", cmd, cx),
-            None => self.toast(None, "Nothing to hand to an agent: it is in review or closed."),
+            None => self.toast(
+                None,
+                "Nothing to hand to an agent: it is in review or closed.",
+            ),
         }
     }
 
@@ -908,7 +1044,10 @@ impl KuzgunApp {
         let Some(path) = self.current_path() else {
             return;
         };
-        let t = self.board.find_path(&path).map(|ix| self.board.tickets[ix].clone());
+        let t = self
+            .board
+            .find_path(&path)
+            .map(|ix| self.board.tickets[ix].clone());
         let text = match (what, t) {
             ("ID", Some(t)) => t.key,
             ("title", Some(t)) => t.title,
@@ -932,7 +1071,10 @@ impl KuzgunApp {
 
     /// The shown project, if one is picked.
     pub fn project_ix(&self) -> Option<usize> {
-        self.view.project.as_ref().and_then(|name| self.board.projects.iter().position(|p| &p.name == name))
+        self.view
+            .project
+            .as_ref()
+            .and_then(|name| self.board.projects.iter().position(|p| &p.name == name))
     }
 
     /// Unix seconds a ticket last changed: git status move, else file mtime.
@@ -942,23 +1084,28 @@ impl KuzgunApp {
         if let Some(g) = self.ages.get(&t.path) {
             return g.updated;
         }
-        let mtime = t
-            .modified
+        t.modified
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        mtime
+            .unwrap_or(0)
     }
 
     /// Unix seconds the ticket entered its status (git), else its mtime.
     pub fn status_since(&self, i: usize) -> i64 {
-        self.ages.get(&self.board.tickets[i].path).map(|a| a.since).unwrap_or_else(|| self.updated_at(i))
+        self.ages
+            .get(&self.board.tickets[i].path)
+            .map(|a| a.since)
+            .unwrap_or_else(|| self.updated_at(i))
     }
 
     /// Tickets of the shown project, before any other filter.
     pub fn in_scope(&self) -> usize {
         let p = self.project_ix();
-        self.board.tickets.iter().filter(|t| p.is_none_or(|p| t.project == p)).count()
+        self.board
+            .tickets
+            .iter()
+            .filter(|t| p.is_none_or(|p| t.project == p))
+            .count()
     }
 
     /// Tickets that pass every filter, in the chosen order.
@@ -987,10 +1134,15 @@ impl KuzgunApp {
                         FILTER_STATUS => &t.status_key == v,
                         FILTER_RELATIONS => match v.as_str() {
                             "Blocked" => self.idx.blocked.get(i).copied().unwrap_or(false),
-                            "Blocking others" => self.idx.blocking_open.get(i).copied().unwrap_or(0) > 0,
+                            "Blocking others" => {
+                                self.idx.blocking_open.get(i).copied().unwrap_or(0) > 0
+                            }
                             _ => t.blocked_by.is_empty() && t.blocks.is_empty(),
                         },
-                        FILTER_MODE => self.idx.modes.get(i).copied().flatten().map(|m| m.label()) == Some(v.as_str()),
+                        FILTER_MODE => {
+                            self.idx.modes.get(i).copied().flatten().map(|m| m.label())
+                                == Some(v.as_str())
+                        }
                         _ => t.field_values(k).iter().any(|x| x == v),
                     };
                     if !ok {
@@ -1001,8 +1153,12 @@ impl KuzgunApp {
                     Quick::All => true,
                     Quick::Frontier => self.idx.frontier.get(i).copied().unwrap_or(false),
                     Quick::Blocked => self.idx.blocked.get(i).copied().unwrap_or(false),
-                    Quick::Human => self.idx.modes.get(i).copied().flatten() == Some(model::Mode::Hitl),
-                    Quick::Agent => self.idx.modes.get(i).copied().flatten() == Some(model::Mode::Afk),
+                    Quick::Human => {
+                        self.idx.modes.get(i).copied().flatten() == Some(model::Mode::Hitl)
+                    }
+                    Quick::Agent => {
+                        self.idx.modes.get(i).copied().flatten() == Some(model::Mode::Afk)
+                    }
                     Quick::Recent => now - self.updated_at(i) <= 86_400,
                     Quick::Attention => self.idx.attention.get(i).is_some_and(|a| !a.is_empty()),
                 };
@@ -1017,12 +1173,18 @@ impl KuzgunApp {
                         .is_some_and(|h| words.iter().all(|w| h.contains(w)))
             })
             .collect();
-        let ordering = if self.quick == Quick::Recent { store::Ordering::Updated } else { self.view.ordering };
+        let ordering = if self.quick == Quick::Recent {
+            store::Ordering::Updated
+        } else {
+            self.view.ordering
+        };
         match ordering {
             store::Ordering::Number => {}
             store::Ordering::Updated => out.sort_by_key(|&i| std::cmp::Reverse(self.updated_at(i))),
             store::Ordering::TimeInStatus => out.sort_by_key(|&i| self.status_since(i)),
-            store::Ordering::Title => out.sort_by_key(|&i| self.board.tickets[i].title.to_lowercase()),
+            store::Ordering::Title => {
+                out.sort_by_key(|&i| self.board.tickets[i].title.to_lowercase())
+            }
         }
         out
     }
@@ -1063,7 +1225,9 @@ impl KuzgunApp {
         let b = &self.board;
         let n = b.tickets.len();
         let blocked: Vec<bool> = (0..n).map(|i| b.is_blocked(i)).collect();
-        let frontier: Vec<bool> = (0..n).map(|i| b.tickets[i].category == Category::Todo && !blocked[i]).collect();
+        let frontier: Vec<bool> = (0..n)
+            .map(|i| b.tickets[i].category == Category::Todo && !blocked[i])
+            .collect();
         let modes: Vec<Option<model::Mode>> = (0..n).map(|i| b.mode(i)).collect();
         let hay = b
             .tickets
@@ -1090,8 +1254,14 @@ impl KuzgunApp {
             n,
             frontier.iter().filter(|x| **x).count(),
             blocked.iter().filter(|x| **x).count(),
-            modes.iter().filter(|m| **m == Some(model::Mode::Hitl)).count(),
-            modes.iter().filter(|m| **m == Some(model::Mode::Afk)).count(),
+            modes
+                .iter()
+                .filter(|m| **m == Some(model::Mode::Hitl))
+                .count(),
+            modes
+                .iter()
+                .filter(|m| **m == Some(model::Mode::Afk))
+                .count(),
             b.tickets
                 .iter()
                 .filter(|t| {
@@ -1113,7 +1283,13 @@ impl KuzgunApp {
             })
             .collect();
         let blocking_open = (0..n)
-            .map(|i| b.tickets[i].blocks.iter().filter(|&&j| !b.tickets[j].category.is_closed()).count())
+            .map(|i| {
+                b.tickets[i]
+                    .blocks
+                    .iter()
+                    .filter(|&&j| !b.tickets[j].category.is_closed())
+                    .count()
+            })
             .collect();
         self.idx = Index {
             blocked,
@@ -1131,7 +1307,9 @@ impl KuzgunApp {
     /// picked), so a project never shows another project's empty columns.
     pub fn columns(&self) -> Vec<Column> {
         let project = self.project_ix();
-        let mut cols = self.board.columns_of(project, crate::settings::get().show_empty_columns);
+        let mut cols = self
+            .board
+            .columns_of(project, crate::settings::get().show_empty_columns);
         if self.view.completed == store::Completed::None {
             cols.retain(|c| !c.category.is_closed());
         }
@@ -1139,11 +1317,21 @@ impl KuzgunApp {
         // ones, so a ready column holds only what can really start.
         if self.split_blocked() {
             let any = (0..self.board.tickets.len()).any(|i| {
-                project.is_none_or(|p| self.board.tickets[i].project == p) && self.waits_on_blockers(i)
+                project.is_none_or(|p| self.board.tickets[i].project == p)
+                    && self.waits_on_blockers(i)
             });
             if any {
-                let at = cols.iter().position(|c| c.category == Category::Todo).unwrap_or(cols.len());
-                cols.insert(at, Column { status: WAITING.into(), category: Category::Todo });
+                let at = cols
+                    .iter()
+                    .position(|c| c.category == Category::Todo)
+                    .unwrap_or(cols.len());
+                cols.insert(
+                    at,
+                    Column {
+                        status: WAITING.into(),
+                        category: Category::Todo,
+                    },
+                );
             }
         }
         cols
@@ -1155,7 +1343,8 @@ impl KuzgunApp {
 
     /// An unstarted ticket whose blockers are still open.
     pub fn waits_on_blockers(&self, i: usize) -> bool {
-        self.board.tickets[i].category == Category::Todo && self.idx.blocked.get(i).copied().unwrap_or(false)
+        self.board.tickets[i].category == Category::Todo
+            && self.idx.blocked.get(i).copied().unwrap_or(false)
     }
 
     /// The column a ticket shows in.
@@ -1173,10 +1362,15 @@ impl KuzgunApp {
         self.columns()
             .into_iter()
             .map(|c| {
-                let mut items: Vec<usize> = vis.iter().copied().filter(|&i| self.column_key(i) == c.status).collect();
+                let mut items: Vec<usize> = vis
+                    .iter()
+                    .copied()
+                    .filter(|&i| self.column_key(i) == c.status)
+                    .collect();
                 if c.status == WAITING {
                     // Closest to ready first.
-                    items.sort_by_key(|&i| self.idx.open_blockers.get(i).map(Vec::len).unwrap_or(0));
+                    items
+                        .sort_by_key(|&i| self.idx.open_blockers.get(i).map(Vec::len).unwrap_or(0));
                 }
                 (c, items)
             })
@@ -1203,7 +1397,13 @@ impl KuzgunApp {
         })
     }
 
-    pub fn move_selection(&mut self, dc: i32, dr: i32, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_selection(
+        &mut self,
+        dc: i32,
+        dr: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let g = self.grouped(cx);
         if g.iter().all(|(_, v)| v.is_empty()) {
             return;
@@ -1220,7 +1420,10 @@ impl KuzgunApp {
                 .flat_map(|(_, v)| v.iter().copied())
                 .collect();
             let cur = self.board.tickets[g[c].1[r]].path.clone();
-            let pos = flat.iter().position(|&i| self.board.tickets[i].path == cur).unwrap_or(0) as i32;
+            let pos = flat
+                .iter()
+                .position(|&i| self.board.tickets[i].path == cur)
+                .unwrap_or(0) as i32;
             let next = (pos + dr).clamp(0, flat.len().saturating_sub(1) as i32) as usize;
             if let Some(&i) = flat.get(next) {
                 let path = self.board.tickets[i].path.clone();
@@ -1261,7 +1464,13 @@ impl KuzgunApp {
 
     /// Opens a ticket as a new root (a card, the palette, j / k): the
     /// navigation stack starts over.
-    pub fn open_detail(&mut self, path: PathBuf, full: bool, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_detail(
+        &mut self,
+        path: PathBuf,
+        full: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.detail.as_ref().is_none_or(|d| d.path != path) {
             self.nav_back.clear();
             self.nav_fwd.clear();
@@ -1325,7 +1534,10 @@ impl KuzgunApp {
         if !is_doc {
             self.selected = Some(path.clone());
         }
-        let same = self.detail.as_ref().is_some_and(|d| d.path == path && d.is_doc == is_doc);
+        let same = self
+            .detail
+            .as_ref()
+            .is_some_and(|d| d.path == path && d.is_doc == is_doc);
         if same {
             if let Some(d) = &mut self.detail {
                 d.full = full;
@@ -1342,7 +1554,10 @@ impl KuzgunApp {
     pub fn assignees(&self, i: usize) -> Option<Vec<String>> {
         let t = &self.board.tickets[i];
         let mut out: Vec<String> = Vec::new();
-        if t.agent.as_ref().is_some_and(|a| a.state == crate::agents::RunState::Running) {
+        if t.agent
+            .as_ref()
+            .is_some_and(|a| a.state == crate::agents::RunState::Running)
+        {
             out.push(crate::board::AGENT_NAME.to_string());
         }
         if let Some(g) = self.ages.get(&t.path) {
@@ -1379,12 +1594,23 @@ impl KuzgunApp {
         self.board
             .find_path(path)
             .map(|i| self.board.tickets[i].key.clone())
-            .unwrap_or_else(|| path.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .unwrap_or_else(|| {
+                path.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            })
     }
 
     /// A markdown link from the detail view: a ticket or doc opens inside,
     /// anything else goes to the system.
-    pub fn follow_link(&mut self, base: &Path, url: &str, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn follow_link(
+        &mut self,
+        base: &Path,
+        url: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if url.contains("://") || url.starts_with("mailto:") {
             cx.open_url(url);
             return;
@@ -1583,9 +1809,17 @@ impl KuzgunApp {
         let pinned = b.pinned;
         Self::welcome_line(
             ("recent-board", n),
-            if b.pinned { IconName::Pin } else { IconName::SquareKanban },
+            if b.pinned {
+                IconName::Pin
+            } else {
+                IconName::SquareKanban
+            },
             b.name.clone(),
-            Some(if missing { format!("{detail} · missing") } else { detail }),
+            Some(if missing {
+                format!("{detail} · missing")
+            } else {
+                detail
+            }),
             trailing,
             if b.pinned { accent } else { muted },
             muted,
@@ -1619,18 +1853,22 @@ impl KuzgunApp {
                     },
                 ),
             )
-            .item(PopupMenuItem::new("Reveal in Finder").on_click(move |_, _, cx| {
-                cx.reveal_path(&p3);
-            }))
+            .item(
+                PopupMenuItem::new("Reveal in Finder").on_click(move |_, _, cx| {
+                    cx.reveal_path(&p3);
+                }),
+            )
             .separator()
-            .item(PopupMenuItem::new("Remove from List").on_click(move |_, _, cx| {
-                let p = p4.clone();
-                with_app(cx, |this, cx| {
-                    this.saved.retain(|b| b.path != p);
-                    store::save_boards(&this.saved);
-                    cx.notify();
-                });
-            }))
+            .item(
+                PopupMenuItem::new("Remove from List").on_click(move |_, _, cx| {
+                    let p = p4.clone();
+                    with_app(cx, |this, cx| {
+                        this.saved.retain(|b| b.path != p);
+                        store::save_boards(&this.saved);
+                        cx.notify();
+                    });
+                }),
+            )
         })
         .into_any_element()
     }
@@ -1638,7 +1876,10 @@ impl KuzgunApp {
     fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let muted = cx.theme().muted_foreground;
         let fg = cx.theme().foreground;
-        let logo = std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, crate::icons::LOGO.to_vec()));
+        let logo = std::sync::Arc::new(Image::from_bytes(
+            ImageFormat::Png,
+            crate::icons::LOGO.to_vec(),
+        ));
         let mut col = div()
             .flex()
             .flex_col()
@@ -1668,7 +1909,9 @@ impl KuzgunApp {
                                     .line_height(zrem(18.))
                                     .italic()
                                     .text_color(muted)
-                                    .child("A raven's-eye board for your mattpocock/skills tickets"),
+                                    .child(
+                                        "A raven's-eye board for your mattpocock/skills tickets",
+                                    ),
                             ),
                     ),
             )
@@ -1685,8 +1928,21 @@ impl KuzgunApp {
                         .border_1()
                         .border_color(warn.opacity(0.4))
                         .bg(warn.opacity(0.08))
-                        .child(Icon::new(IconName::Info).size(px(16.)).text_color(warn).flex_none().mt(px(2.)))
-                        .child(div().flex_1().min_w_0().text_sm().text_color(fg).child(note))
+                        .child(
+                            Icon::new(IconName::Info)
+                                .size(px(16.))
+                                .text_color(warn)
+                                .flex_none()
+                                .mt(px(2.)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .text_color(fg)
+                                .child(note),
+                        )
                         .child(
                             Button::new("welcome-notice-close")
                                 .ghost()
@@ -1699,7 +1955,11 @@ impl KuzgunApp {
                         ),
                 )
             })
-            .child(div().pb(px(4.)).child(Self::section_header("Get Started", muted)))
+            .child(
+                div()
+                    .pb(px(4.))
+                    .child(Self::section_header("Get Started", muted)),
+            )
             .child(self.welcome_row(
                 "welcome-open",
                 IconName::FolderOpen,
@@ -1783,23 +2043,35 @@ impl KuzgunApp {
                     .gap_1p5()
                     .text_sm()
                     .text_color(fg)
-                    .child(Icon::new(IconName::SquareKanban).size(px(13.)).text_color(muted))
+                    .child(
+                        Icon::new(IconName::SquareKanban)
+                            .size(px(13.))
+                            .text_color(muted),
+                    )
                     .child(name)
-                    .child(Icon::new(IconName::ChevronDown).size(px(12.)).text_color(muted)),
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(px(12.))
+                            .text_color(muted),
+                    ),
             )
             .dropdown_menu(move |mut menu, _, _| {
                 for b in saved.iter().take(9) {
                     let p = b.path.clone();
-                    menu = menu.item(PopupMenuItem::new(b.name.clone()).on_click(move |_, window, cx| {
-                        let p = p.clone();
-                        let view = cx.global::<KuzgunHandle>().0.clone();
-                        view.update(cx, |this, cx| this.open_board(p, window, cx));
-                    }));
+                    menu = menu.item(PopupMenuItem::new(b.name.clone()).on_click(
+                        move |_, window, cx| {
+                            let p = p.clone();
+                            let view = cx.global::<KuzgunHandle>().0.clone();
+                            view.update(cx, |this, cx| this.open_board(p, window, cx));
+                        },
+                    ));
                 }
                 menu.separator()
-                    .item(PopupMenuItem::new("Open Folder…").on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(OpenFolder), cx);
-                    }))
+                    .item(
+                        PopupMenuItem::new("Open Folder…").on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(OpenFolder), cx);
+                        }),
+                    )
                     .item(PopupMenuItem::new("Reveal in Finder").on_click(|_, _, cx| {
                         let root = cx.global::<KuzgunHandle>().0.read(cx).root.clone();
                         if let Some(r) = root {
@@ -1816,7 +2088,12 @@ impl KuzgunApp {
             .as_ref()
             .and_then(|n| self.board.projects.iter().find(|p| &p.name == n))
             .map(|p| p.title.clone());
-        let projects: Vec<(String, String)> = self.board.projects.iter().map(|p| (p.name.clone(), p.title.clone())).collect();
+        let projects: Vec<(String, String)> = self
+            .board
+            .projects
+            .iter()
+            .map(|p| (p.name.clone(), p.title.clone()))
+            .collect();
         let project_menu = Button::new("project-menu")
             .ghost()
             .small()
@@ -1828,7 +2105,11 @@ impl KuzgunApp {
                     .text_sm()
                     .text_color(fg)
                     .child(project.clone().unwrap_or_else(|| "All projects".into()))
-                    .child(Icon::new(IconName::ChevronDown).size(px(12.)).text_color(muted)),
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(px(12.))
+                            .text_color(muted),
+                    ),
             )
             .dropdown_menu(move |mut menu, _, _| {
                 menu = menu.item(PopupMenuItem::new("All projects").on_click(|_, _, cx| {
@@ -1844,16 +2125,17 @@ impl KuzgunApp {
                 menu = menu.separator();
                 for (name, title) in &projects {
                     let name = name.clone();
-                    menu = menu.item(PopupMenuItem::new(title.clone()).on_click(move |_, _, cx| {
-                        let name = name.clone();
-                        with_app(cx, |this, cx| {
-                            this.view.project = Some(name);
-                            this.detail = None;
-                            this.session = None;
-                            this.save_view();
-                            cx.notify();
-                        })
-                    }));
+                    menu =
+                        menu.item(PopupMenuItem::new(title.clone()).on_click(move |_, _, cx| {
+                            let name = name.clone();
+                            with_app(cx, |this, cx| {
+                                this.view.project = Some(name);
+                                this.detail = None;
+                                this.session = None;
+                                this.save_view();
+                                cx.notify();
+                            })
+                        }));
                 }
                 menu
             });
@@ -1885,7 +2167,10 @@ impl KuzgunApp {
                 .text_xs()
                 .text_color(green)
                 .child(Icon::new(IconName::Bot).size(px(12.)))
-                .child(format!("{working} agent{} working", if working == 1 { "" } else { "s" }))
+                .child(format!(
+                    "{working} agent{} working",
+                    if working == 1 { "" } else { "s" }
+                ))
         });
         TitleBar::new()
             .child(
@@ -1897,7 +2182,13 @@ impl KuzgunApp {
                         Button::new("crumb-root")
                             .ghost()
                             .small()
-                            .child(img(std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, crate::icons::LOGO.to_vec()))).size(px(18.)))
+                            .child(
+                                img(std::sync::Arc::new(Image::from_bytes(
+                                    ImageFormat::Png,
+                                    crate::icons::LOGO.to_vec(),
+                                )))
+                                .size(px(18.)),
+                            )
                             .tooltip("All boards")
                             .on_click(cx.listener(|this, _, w, cx| this.close_board(w, cx))),
                     )
@@ -1906,7 +2197,14 @@ impl KuzgunApp {
                     .child(div().text_color(muted.opacity(0.5)).child("/"))
                     .child(project_menu),
             )
-            .child(div().pr_2().flex().items_center().gap_2().children(agents_pill))
+            .child(
+                div()
+                    .pr_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .children(agents_pill),
+            )
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1915,12 +2213,21 @@ impl KuzgunApp {
         let light = crate::settings::is_light(cx);
         let mut counts: Vec<(Category, usize)> = Vec::new();
         for c in Category::ALL {
-            let n = self.board.tickets.iter().filter(|t| t.category == c).count();
+            let n = self
+                .board
+                .tickets
+                .iter()
+                .filter(|t| t.category == c)
+                .count();
             if n > 0 {
                 counts.push((c, n));
             }
         }
-        let shown = if self.screen == Screen::Board { self.visible(cx).len() } else { 0 };
+        let shown = if self.screen == Screen::Board {
+            self.visible(cx).len()
+        } else {
+            0
+        };
         let changed = self.last_change.map(|(at, n)| {
             let ago = at.elapsed().map(|d| d.as_secs() as i64).unwrap_or(0);
             let what = match n {
@@ -1961,7 +2268,11 @@ impl KuzgunApp {
                         .id(SharedString::from(format!("count-{}", c.label())))
                         .tooltip({
                             let tip = format!("{}: {n}", c.label());
-                            move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).max_w(px(360.)).build(window, cx)
+                            move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                    .max_w(px(360.))
+                                    .build(window, cx)
+                            }
                         })
                         .flex()
                         .items_center()
@@ -1975,11 +2286,10 @@ impl KuzgunApp {
                 }))
                 .when(!self.board.errors.is_empty(), |d| {
                     let n = self.board.errors.len();
-                    d.child(
-                        div()
-                            .text_color(cx.theme().red)
-                            .child(format!("{n} file{} unreadable", if n == 1 { "" } else { "s" })),
-                    )
+                    d.child(div().text_color(cx.theme().red).child(format!(
+                        "{n} file{} unreadable",
+                        if n == 1 { "" } else { "s" }
+                    )))
                 })
                 .child(div().flex_1())
                 .children(changed)
@@ -1990,11 +2300,50 @@ impl KuzgunApp {
                 )
             })
             .when(self.screen != Screen::Board, |d| {
-                d.child(div().flex_1()).child(format!("Kuzgun {}", env!("CARGO_PKG_VERSION")))
+                d.child(div().flex_1())
+                    .child(format!("Kuzgun {}", env!("CARGO_PKG_VERSION")))
             })
+            .children(crate::updater::ready(cx).map(|v| Self::render_update_button(v, cx)))
     }
 
-    fn on_external_drop(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+    /// A downloaded update: one click installs it and relaunches.
+    fn render_update_button(version: String, cx: &mut Context<Self>) -> AnyElement {
+        let accent = cx.theme().accent;
+        let tip = if version.is_empty() {
+            "Install the update and relaunch".to_string()
+        } else {
+            format!("Install Kuzgun {version} and relaunch")
+        };
+        div()
+            .id("restart-to-update")
+            .flex()
+            .items_center()
+            .gap_1()
+            .ml_2()
+            .px_2()
+            .h(px(20.))
+            .rounded(px(4.))
+            .cursor_pointer()
+            .text_xs()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(accent)
+            .bg(accent.opacity(0.14))
+            .hover(|d| d.bg(accent.opacity(0.24)))
+            .child(Icon::new(IconName::ArrowDown).size(px(12.)))
+            .child("Restart to Update")
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+            })
+            .on_click(|_, _, _| crate::updater::restart_to_update())
+            .into_any_element()
+    }
+
+    fn on_external_drop(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(p) = paths.paths().first() {
             let dir = if p.is_dir() {
                 p.clone()
@@ -2011,7 +2360,10 @@ pub fn repo_relative(path: &Path) -> String {
     let mut dir = path.parent();
     while let Some(d) = dir {
         if d.join(".git").exists() {
-            return path.strip_prefix(d).map(|p| p.display().to_string()).unwrap_or_default();
+            return path
+                .strip_prefix(d)
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
         }
         dir = d.parent();
     }
@@ -2041,21 +2393,34 @@ fn attention_of(b: &Board, _blocked: &[bool]) -> Vec<Vec<String>> {
     for (i, t) in b.tickets.iter().enumerate() {
         let r = &mut out[i];
         if let Some(why) = &t.inferred {
-            r.push(format!("The file says \"{}\" but {}", t.status, why.to_lowercase()));
+            r.push(format!(
+                "The file says \"{}\" but {}",
+                t.status,
+                why.to_lowercase()
+            ));
         }
         let dangling = t
             .blocked_refs
             .iter()
             .filter(|rf| {
-                let doc = rf.path.as_ref().is_some_and(|p| p.is_file() && b.find_path(p).is_none());
+                let doc = rf
+                    .path
+                    .as_ref()
+                    .is_some_and(|p| p.is_file() && b.find_path(p).is_none());
                 !doc && rf.hit.is_none() && rf.project.is_none()
             })
             .count();
         if dangling > 0 {
-            r.push(format!("{dangling} blocker{} not found on this board", if dangling == 1 { " is" } else { "s are" }));
+            r.push(format!(
+                "{dangling} blocker{} not found on this board",
+                if dangling == 1 { " is" } else { "s are" }
+            ));
         }
         let project = &b.projects[t.project];
-        if project.map.is_some() && model::normalize(&t.status) == "resolved" && !t.raw.contains("\n## Answer") {
+        if project.map.is_some()
+            && model::normalize(&t.status) == "resolved"
+            && !t.raw.contains("\n## Answer")
+        {
             r.push("Resolved without an ## Answer section".into());
         }
         if t.category == Category::InProgress && t.agent.is_none() {
@@ -2065,13 +2430,22 @@ fn attention_of(b: &Board, _blocked: &[bool]) -> Vec<Vec<String>> {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(now);
             if now - since > 86_400 {
-                r.push(format!("In progress for {} with no agent working on it", ago_label(now - since).trim_end_matches(" ago")));
+                r.push(format!(
+                    "In progress for {} with no agent working on it",
+                    ago_label(now - since).trim_end_matches(" ago")
+                ));
             }
         }
         if t.category.is_closed() {
-            let open_blockers = t.blocked_by.iter().filter(|&&j| !b.tickets[j].category.is_closed()).count();
+            let open_blockers = t
+                .blocked_by
+                .iter()
+                .filter(|&&j| !b.tickets[j].category.is_closed())
+                .count();
             if open_blockers > 0 {
-                r.push(format!("Closed while {open_blockers} of its blockers are still open"));
+                r.push(format!(
+                    "Closed while {open_blockers} of its blockers are still open"
+                ));
             }
         }
     }

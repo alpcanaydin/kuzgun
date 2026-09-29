@@ -73,7 +73,12 @@ pub enum Ordering {
 }
 
 impl Ordering {
-    pub const ALL: [Ordering; 4] = [Ordering::Number, Ordering::Updated, Ordering::TimeInStatus, Ordering::Title];
+    pub const ALL: [Ordering; 4] = [
+        Ordering::Number,
+        Ordering::Updated,
+        Ordering::TimeInStatus,
+        Ordering::Title,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Ordering::Number => "Number",
@@ -95,7 +100,12 @@ pub enum Completed {
 }
 
 impl Completed {
-    pub const ALL: [Completed; 4] = [Completed::All, Completed::PastWeek, Completed::PastMonth, Completed::None];
+    pub const ALL: [Completed; 4] = [
+        Completed::All,
+        Completed::PastWeek,
+        Completed::PastMonth,
+        Completed::None,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             Completed::All => "All",
@@ -200,10 +210,11 @@ pub fn default_name(path: &Path) -> String {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let generic = own.starts_with('.')
-        || matches!(own.as_str(), "issues" | "tickets" | "tasks" | "docs" | "board");
-    if generic
-        && let Some(parent) = path.parent().and_then(|p| p.file_name())
-    {
+        || matches!(
+            own.as_str(),
+            "issues" | "tickets" | "tasks" | "docs" | "board"
+        );
+    if generic && let Some(parent) = path.parent().and_then(|p| p.file_name()) {
         return parent.to_string_lossy().to_string();
     }
     own
@@ -211,7 +222,9 @@ pub fn default_name(path: &Path) -> String {
 
 pub fn view_state(path: &Path) -> ViewState {
     let all: BTreeMap<String, ViewState> = read_json(&views_path());
-    all.get(&path.display().to_string()).cloned().unwrap_or_default()
+    all.get(&path.display().to_string())
+        .cloned()
+        .unwrap_or_default()
 }
 
 pub fn save_view_state(path: &Path, v: &ViewState) {

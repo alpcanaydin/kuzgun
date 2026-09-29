@@ -118,7 +118,10 @@ pub fn grid_rule_rgba(p: &Pal) -> (u32, f32) {
     if span.abs() < 1. {
         return (grid_line(p), 1.);
     }
-    (p.fg, ((lum(grid_line(p)) - lum(p.bg)) / span).clamp(0.04, 0.6))
+    (
+        p.fg,
+        ((lum(grid_line(p)) - lum(p.bg)) / span).clamp(0.04, 0.6),
+    )
 }
 
 fn grid_rule(p: &Pal) -> String {
@@ -202,7 +205,10 @@ pub fn config_json(p: &Pal) -> Value {
         ("list.active.border", hex(p.accent)),
         ("table.background", hex(p.bg)),
         // Stripe: the background nudged toward the text color.
-        ("table.even.background", hex(mix(p.bg, p.fg, if p.light { 0.035 } else { 0.03 }))),
+        (
+            "table.even.background",
+            hex(mix(p.bg, p.fg, if p.light { 0.035 } else { 0.03 })),
+        ),
         ("table.head.background", hex(p.surface)),
         ("table.head.foreground", hex(p.muted_fg)),
         ("table.hover.background", hex(p.hover)),
@@ -1363,12 +1369,16 @@ pub fn clashes_with_changes(c: gpui_kit::Hsla) -> bool {
     if c.s < 0.25 {
         return false;
     }
-    [crate::theme::EDITED, crate::theme::DELETED, crate::theme::ADDED]
-        .iter()
-        .any(|&v| {
-            let d = (gpui_kit::Hsla::from(gpui_kit::rgb(v)).h - c.h).abs();
-            d.min(1. - d) < 30. / 360.
-        })
+    [
+        crate::theme::EDITED,
+        crate::theme::DELETED,
+        crate::theme::ADDED,
+    ]
+    .iter()
+    .any(|&v| {
+        let d = (gpui_kit::Hsla::from(gpui_kit::rgb(v)).h - c.h).abs();
+        d.min(1. - d) < 30. / 360.
+    })
 }
 
 #[cfg(test)]
@@ -1398,9 +1408,17 @@ mod tests {
         };
         for p in PALETTES {
             let line = grid_line(p);
-            assert!((lum(line) - lum(p.hover)).abs() >= 10., "{} vs hover", p.name);
+            assert!(
+                (lum(line) - lum(p.hover)).abs() >= 10.,
+                "{} vs hover",
+                p.name
+            );
             let b = visible_border(p);
-            assert!((lum(b) - lum(p.elevated)).abs() >= 8., "{} border vs popover", p.name);
+            assert!(
+                (lum(b) - lum(p.elevated)).abs() >= 8.,
+                "{} border vs popover",
+                p.name
+            );
         }
     }
 
@@ -1411,8 +1429,14 @@ mod tests {
             if name == "Theme" {
                 continue;
             }
-            assert!(!super::clashes_with_changes(Hsla::from(rgb(dark))), "{name}");
-            assert!(!super::clashes_with_changes(Hsla::from(rgb(light))), "{name}");
+            assert!(
+                !super::clashes_with_changes(Hsla::from(rgb(dark))),
+                "{name}"
+            );
+            assert!(
+                !super::clashes_with_changes(Hsla::from(rgb(light))),
+                "{name}"
+            );
         }
         assert!(super::clashes_with_changes(Hsla::from(rgb(0xF0A23A))));
         assert!(super::clashes_with_changes(Hsla::from(rgb(0x5CC26B))));

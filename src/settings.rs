@@ -205,7 +205,10 @@ impl Prefs {
             .mono_font_size
             .round()
             .clamp(MONO_SIZE_RANGE.0, MONO_SIZE_RANGE.1);
-        self.column_width = self.column_width.round().clamp(COLUMN_RANGE.0, COLUMN_RANGE.1);
+        self.column_width = self
+            .column_width
+            .round()
+            .clamp(COLUMN_RANGE.0, COLUMN_RANGE.1);
         if !ACCENTS.iter().any(|(n, _, _)| *n == self.accent) {
             self.accent = d.accent.clone();
         }
@@ -232,7 +235,6 @@ static FONTS: LazyLock<RwLock<(SharedString, SharedString)>> = LazyLock::new(|| 
         crate::theme::family(&p.mono_font_family).into(),
     ))
 });
-
 
 fn path() -> std::path::PathBuf {
     crate::store::dir().join("settings.json")
@@ -335,14 +337,9 @@ pub fn ui_font() -> SharedString {
     FONTS.read().map(|f| f.0.clone()).unwrap_or_default()
 }
 
-
-
-
-
 pub fn mono_font() -> SharedString {
     FONTS.read().map(|f| f.1.clone()).unwrap_or_default()
 }
-
 
 // ---------------------------------------------------------------------------
 // Settings window
@@ -379,7 +376,7 @@ impl SettingsWindow {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(560.), px(360.))),
                 focus: !crate::background(),
-            ..TitleBar::window_options()
+                ..TitleBar::window_options()
             },
             |window, cx| {
                 let view = cx.new(|cx| SettingsWindow::new(window, cx));
@@ -557,62 +554,64 @@ impl SettingsWindow {
         let appearance = SettingPage::new("Appearance")
             .icon(IconName::Palette)
             .group(
-                SettingGroup::new()
-                    .title("Theme")
-                    .item(
-                        SettingItem::new(
-                            "Mode",
-                            SettingField::dropdown(
-                                modes,
-                                |_| get().appearance.label().into(),
-                                |v: SharedString, cx| {
-                                    update(cx, |p| p.appearance = Appearance::from_label(&v))
-                                },
-                            )
-                            .default_value(SharedString::from(d.appearance.label())),
+            SettingGroup::new()
+                .title("Theme")
+                .item(
+                    SettingItem::new(
+                        "Mode",
+                        SettingField::dropdown(
+                            modes,
+                            |_| get().appearance.label().into(),
+                            |v: SharedString, cx| {
+                                update(cx, |p| p.appearance = Appearance::from_label(&v))
+                            },
                         )
-                        .description("System follows macOS light / dark appearance."),
+                        .default_value(SharedString::from(d.appearance.label())),
                     )
-                    .item(
-                        SettingItem::new(
-                            "Accent Color",
-                            SettingField::dropdown(
-                                ACCENTS
-                                    .iter()
-                                    .map(|(n, _, _)| (SharedString::from(*n), SharedString::from(*n)))
-                                    .collect(),
-                                |_| get().accent.clone().into(),
-                                |v: SharedString, cx| update(cx, |p| p.accent = v.to_string()),
-                            )
-                            .default_value(SharedString::from(d.accent.clone())),
+                    .description("System follows macOS light / dark appearance."),
+                )
+                .item(
+                    SettingItem::new(
+                        "Accent Color",
+                        SettingField::dropdown(
+                            ACCENTS
+                                .iter()
+                                .map(|(n, _, _)| (SharedString::from(*n), SharedString::from(*n)))
+                                .collect(),
+                            |_| get().accent.clone().into(),
+                            |v: SharedString, cx| update(cx, |p| p.accent = v.to_string()),
                         )
-                        .description("Buttons, focus, caret, selection frames. \"Theme\" keeps the theme's own."),
+                        .default_value(SharedString::from(d.accent.clone())),
                     )
-                    .item(
-                        SettingItem::new(
-                            "Light Theme",
-                            SettingField::scrollable_dropdown(
-                                options(true),
-                                |_| get().light_theme.clone().into(),
-                                |v: SharedString, cx| update(cx, |p| p.light_theme = v.to_string()),
-                            )
-                            .default_value(SharedString::from(d.light_theme.clone())),
-                        )
-                        .description("Used in light mode."),
-                    )
-                    .item(
-                        SettingItem::new(
-                            "Dark Theme",
-                            SettingField::scrollable_dropdown(
-                                options(false),
-                                |_| get().dark_theme.clone().into(),
-                                |v: SharedString, cx| update(cx, |p| p.dark_theme = v.to_string()),
-                            )
-                            .default_value(SharedString::from(d.dark_theme.clone())),
-                        )
-                        .description("Used in dark mode."),
+                    .description(
+                        "Buttons, focus, caret, selection frames. \"Theme\" keeps the theme's own.",
                     ),
-            );
+                )
+                .item(
+                    SettingItem::new(
+                        "Light Theme",
+                        SettingField::scrollable_dropdown(
+                            options(true),
+                            |_| get().light_theme.clone().into(),
+                            |v: SharedString, cx| update(cx, |p| p.light_theme = v.to_string()),
+                        )
+                        .default_value(SharedString::from(d.light_theme.clone())),
+                    )
+                    .description("Used in light mode."),
+                )
+                .item(
+                    SettingItem::new(
+                        "Dark Theme",
+                        SettingField::scrollable_dropdown(
+                            options(false),
+                            |_| get().dark_theme.clone().into(),
+                            |v: SharedString, cx| update(cx, |p| p.dark_theme = v.to_string()),
+                        )
+                        .default_value(SharedString::from(d.dark_theme.clone())),
+                    )
+                    .description("Used in dark mode."),
+                ),
+        );
 
         let interface = SettingPage::new("Interface")
             .icon(IconName::PanelLeft)
@@ -639,20 +638,20 @@ impl SettingsWindow {
                         SettingItem::new("Mono Font", Self::font_field(&self.mono_font, false))
                             .description("Ticket keys, file paths and code."),
                     )
-                    .item(
-                        SettingItem::new(
-                            "Mono Font Size",
-                            SettingField::number_input(
-                                size_opts(MONO_SIZE_RANGE),
-                                |_| get().mono_font_size as f64,
-                                |v, cx| update(cx, |p| p.mono_font_size = v as f32),
-                            )
-                            .default_value(d.mono_font_size as f64),
-                        ),
-                    ),
+                    .item(SettingItem::new(
+                        "Mono Font Size",
+                        SettingField::number_input(
+                            size_opts(MONO_SIZE_RANGE),
+                            |_| get().mono_font_size as f64,
+                            |v, cx| update(cx, |p| p.mono_font_size = v as f32),
+                        )
+                        .default_value(d.mono_font_size as f64),
+                    )),
             );
 
-        let board = SettingPage::new("Board").icon(IconName::SquareKanban).group(
+        let board = SettingPage::new("Board")
+            .icon(IconName::SquareKanban)
+            .group(
             SettingGroup::new()
                 .title("Columns & Cards")
                 .item(
@@ -693,26 +692,118 @@ impl SettingsWindow {
                     |p, v| p.show_empty_columns = v,
                     d.show_empty_columns,
                 ))
-                .item(switch("Ticket ID", "WS-12 on the top line.", |p| p.card_id, |p, v| p.card_id = v, d.card_id))
-                .item(switch("Project", "Project chip when the board shows every project.", |p| p.card_project, |p, v| p.card_project = v, d.card_project))
-                .item(switch("Fields", "Short fields that repeat across tickets: Type, Priority, Labels and your own.", |p| p.card_fields, |p, v| p.card_fields = v, d.card_fields))
-                .item(switch("AFK / HITL", "Whether an agent can take the ticket alone or it needs a human.", |p| p.card_mode, |p, v| p.card_mode = v, d.card_mode))
-                .item(switch("Checklist Progress", "Done / total checkboxes with a ring.", |p| p.card_checklist, |p, v| p.card_checklist = v, d.card_checklist))
-                .item(switch("Relations", "Blocked, blocking and needs-a-human markers.", |p| p.card_relations, |p, v| p.card_relations = v, d.card_relations))
-                .item(switch("Days in Column", "Dots for how long the ticket has had its status (git).", |p| p.card_age, |p, v| p.card_age = v, d.card_age))
-                .item(switch("Updated", "When the file last changed.", |p| p.card_updated, |p, v| p.card_updated = v, d.card_updated)),
+                .item(switch(
+                    "Ticket ID",
+                    "WS-12 on the top line.",
+                    |p| p.card_id,
+                    |p, v| p.card_id = v,
+                    d.card_id,
+                ))
+                .item(switch(
+                    "Project",
+                    "Project chip when the board shows every project.",
+                    |p| p.card_project,
+                    |p, v| p.card_project = v,
+                    d.card_project,
+                ))
+                .item(switch(
+                    "Fields",
+                    "Short fields that repeat across tickets: Type, Priority, Labels and your own.",
+                    |p| p.card_fields,
+                    |p, v| p.card_fields = v,
+                    d.card_fields,
+                ))
+                .item(switch(
+                    "AFK / HITL",
+                    "Whether an agent can take the ticket alone or it needs a human.",
+                    |p| p.card_mode,
+                    |p, v| p.card_mode = v,
+                    d.card_mode,
+                ))
+                .item(switch(
+                    "Checklist Progress",
+                    "Done / total checkboxes with a ring.",
+                    |p| p.card_checklist,
+                    |p, v| p.card_checklist = v,
+                    d.card_checklist,
+                ))
+                .item(switch(
+                    "Relations",
+                    "Blocked, blocking and needs-a-human markers.",
+                    |p| p.card_relations,
+                    |p, v| p.card_relations = v,
+                    d.card_relations,
+                ))
+                .item(switch(
+                    "Days in Column",
+                    "Dots for how long the ticket has had its status (git).",
+                    |p| p.card_age,
+                    |p, v| p.card_age = v,
+                    d.card_age,
+                ))
+                .item(switch(
+                    "Updated",
+                    "When the file last changed.",
+                    |p| p.card_updated,
+                    |p, v| p.card_updated = v,
+                    d.card_updated,
+                )),
         );
-        let notifications = SettingPage::new("Notifications").icon(IconName::Bell).group(
-            SettingGroup::new()
-                .title("When to notify")
-                .item(switch("Notifications", "Post macOS notifications for the moments below.", |p| p.notify_enabled, |p, v| p.notify_enabled = v, d.notify_enabled))
-                .item(switch("Only in the Background", "Stay quiet while Kuzgun is the active app.", |p| p.notify_background_only, |p, v| p.notify_background_only = v, d.notify_background_only))
-                .item(switch("Agent Finished", "An agent stopped work on a ticket: it waits on review.", |p| p.notify_agent_done, |p, v| p.notify_agent_done = v, d.notify_agent_done))
-                .item(switch("Agent Started", "An agent began work on a ticket.", |p| p.notify_agent_started, |p, v| p.notify_agent_started = v, d.notify_agent_started))
-                .item(switch("Ready to Start", "The last blocker of a ticket closed: it is on the frontier.", |p| p.notify_unblocked, |p, v| p.notify_unblocked = v, d.notify_unblocked))
-                .item(switch("Needs You", "A ticket that needs a person (HITL) can start.", |p| p.notify_needs_you, |p, v| p.notify_needs_you = v, d.notify_needs_you))
-                .item(switch("Ticket Closed", "A ticket moved to done, resolved or canceled.", |p| p.notify_closed, |p, v| p.notify_closed = v, d.notify_closed)),
-        );
+        let notifications = SettingPage::new("Notifications")
+            .icon(IconName::Bell)
+            .group(
+                SettingGroup::new()
+                    .title("When to notify")
+                    .item(switch(
+                        "Notifications",
+                        "Post macOS notifications for the moments below.",
+                        |p| p.notify_enabled,
+                        |p, v| p.notify_enabled = v,
+                        d.notify_enabled,
+                    ))
+                    .item(switch(
+                        "Only in the Background",
+                        "Stay quiet while Kuzgun is the active app.",
+                        |p| p.notify_background_only,
+                        |p, v| p.notify_background_only = v,
+                        d.notify_background_only,
+                    ))
+                    .item(switch(
+                        "Agent Finished",
+                        "An agent stopped work on a ticket: it waits on review.",
+                        |p| p.notify_agent_done,
+                        |p, v| p.notify_agent_done = v,
+                        d.notify_agent_done,
+                    ))
+                    .item(switch(
+                        "Agent Started",
+                        "An agent began work on a ticket.",
+                        |p| p.notify_agent_started,
+                        |p, v| p.notify_agent_started = v,
+                        d.notify_agent_started,
+                    ))
+                    .item(switch(
+                        "Ready to Start",
+                        "The last blocker of a ticket closed: it is on the frontier.",
+                        |p| p.notify_unblocked,
+                        |p, v| p.notify_unblocked = v,
+                        d.notify_unblocked,
+                    ))
+                    .item(switch(
+                        "Needs You",
+                        "A ticket that needs a person (HITL) can start.",
+                        |p| p.notify_needs_you,
+                        |p, v| p.notify_needs_you = v,
+                        d.notify_needs_you,
+                    ))
+                    .item(switch(
+                        "Ticket Closed",
+                        "A ticket moved to done, resolved or canceled.",
+                        |p| p.notify_closed,
+                        |p, v| p.notify_closed = v,
+                        d.notify_closed,
+                    )),
+            );
         vec![general, appearance, interface, board, notifications]
     }
 }

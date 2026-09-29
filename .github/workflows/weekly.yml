@@ -1,0 +1,56 @@
+name: weekly
+
+'on':
+  schedule:
+    # Monday 05:00 UTC.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secrets in the full history
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # mise.toml pins the versions.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+
+      - name: Scan the history
+        run: mise exec -- betterleaks git --no-banner --redact
+
+  # The release packaging (Sparkle, notices, icon) without signing,
+  # so a broken bundle shows up before release day.
+  bundle:
+    name: Unsigned bundle
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Bundle
+        run: scripts/bundle.sh
+
+      - name: Bundle contents
+        run: |
+          app=target/release/bundle/Kuzgun.app
+          test -x "$app/Contents/MacOS/Kuzgun"
+          test -s "$app/Contents/Resources/Kuzgun.icns"
+          test -s "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          # Updates ship once the Sparkle key exists (scripts/setup-release.sh).
+          if [ -s assets/sparkle-public-key ]; then
+            test -d "$app/Contents/Frameworks/Sparkle.framework"
+            /usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$app/Contents/Info.plist"
+          fi

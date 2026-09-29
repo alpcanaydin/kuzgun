@@ -10,6 +10,8 @@ gpui_kit::actions!(
     kuzgun,
     [
         TogglePalette,
+        CheckForUpdates,
+        RestartToUpdate,
         QuickOpenTicket,
         OpenFolder,
         OpenRecent1,

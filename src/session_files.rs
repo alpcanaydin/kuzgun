@@ -84,8 +84,15 @@ struct Node {
 fn build_tree(snap: &Snapshot, changed_only: bool, query: &str) -> Vec<TreeItem> {
     let mut root = Node::default();
     let q = query.trim().to_lowercase();
-    let paths: Vec<&String> = if changed_only { snap.changes.iter().map(|c| &c.path).collect() } else { snap.files.iter().collect() };
-    let paths: Vec<&String> = paths.into_iter().filter(|p| q.is_empty() || p.to_lowercase().contains(&q)).collect();
+    let paths: Vec<&String> = if changed_only {
+        snap.changes.iter().map(|c| &c.path).collect()
+    } else {
+        snap.files.iter().collect()
+    };
+    let paths: Vec<&String> = paths
+        .into_iter()
+        .filter(|p| q.is_empty() || p.to_lowercase().contains(&q))
+        .collect();
     let open_all = changed_only || !q.is_empty();
     for p in paths {
         let mut node = &mut root;
@@ -98,10 +105,18 @@ fn build_tree(snap: &Snapshot, changed_only: bool, query: &str) -> Vec<TreeItem>
     fn items(node: &Node, prefix: &str, snap: &Snapshot, open_all: bool) -> Vec<TreeItem> {
         let mut out = Vec::new();
         for (name, child) in &node.dirs {
-            let path = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
             let dir = format!("{path}/");
             let changed = snap.changes.iter().any(|c| c.path.starts_with(&dir));
-            out.push(TreeItem::new(format!("d:{path}"), name.clone()).expanded(open_all || changed).children(items(child, &path, snap, open_all)));
+            out.push(
+                TreeItem::new(format!("d:{path}"), name.clone())
+                    .expanded(open_all || changed)
+                    .children(items(child, &path, snap, open_all)),
+            );
         }
         for f in &node.files {
             let name = f.rsplit('/').next().unwrap_or(f).to_string();
@@ -122,17 +137,34 @@ impl KuzgunApp {
             return;
         };
         let runs = self.runs_of(ix);
-        let Some(run) = runs.iter().find(|r| r.transcript == s.run).or(runs.first()).cloned() else {
+        let Some(run) = runs
+            .iter()
+            .find(|r| r.transcript == s.run)
+            .or(runs.first())
+            .cloned()
+        else {
             return;
         };
         let Some(repo) = self.root.as_deref().and_then(crate::agents::repo_root) else {
             return;
         };
-        let entries = self.conversations.get(&run.transcript).map(|c| c.transcript.entries.clone()).unwrap_or_default();
-        let inputs = files::inputs(&repo, run.worktree.clone(), run.state == RunState::Running, (run.started, run.last_activity), &entries);
+        let entries = self
+            .conversations
+            .get(&run.transcript)
+            .map(|c| c.transcript.entries.clone())
+            .unwrap_or_default();
+        let inputs = files::inputs(
+            &repo,
+            run.worktree.clone(),
+            run.state == RunState::Running,
+            (run.started, run.last_activity),
+            &entries,
+        );
         let run_path = run.transcript.clone();
         let task = cx.spawn(async move |this, cx| {
-            let snap = cx.background_spawn(async move { files::snapshot(&inputs) }).await;
+            let snap = cx
+                .background_spawn(async move { files::snapshot(&inputs) })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 let Some(s) = this.session.as_mut() else {
                     return;
@@ -149,7 +181,9 @@ impl KuzgunApp {
                 let pick = this.session.as_ref().and_then(|s| {
                     let snap = s.files.snap.as_ref()?;
                     match &s.files.selected {
-                        Some(p) if snap.files.contains(p) || snap.change(p).is_some() => Some(p.clone()),
+                        Some(p) if snap.files.contains(p) || snap.change(p).is_some() => {
+                            Some(p.clone())
+                        }
                         _ if first => snap.changes.first().map(|c| c.path.clone()),
                         _ => None,
                     }
@@ -172,7 +206,12 @@ impl KuzgunApp {
         let Some(snap) = s.files.snap.clone() else {
             return;
         };
-        let query = s.files.query.as_ref().map(|q| q.read(cx).value().to_string()).unwrap_or_default();
+        let query = s
+            .files
+            .query
+            .as_ref()
+            .map(|q| q.read(cx).value().to_string())
+            .unwrap_or_default();
         let items = build_tree(&snap, s.files.changed_only, &query);
         match &s.files.tree {
             Some(t) => t.update(cx, |t, cx| t.set_items(items, cx)),
@@ -195,7 +234,11 @@ impl KuzgunApp {
             return;
         };
         let mode = s.files.mode;
-        let same = s.files.selected.as_ref() == Some(&path) && s.files.text.as_ref().is_some_and(|(p, m, _)| p == &path && *m == mode);
+        let same = s.files.selected.as_ref() == Some(&path)
+            && s.files
+                .text
+                .as_ref()
+                .is_some_and(|(p, m, _)| p == &path && *m == mode);
         s.files.selected = Some(path.clone());
         if same && !force {
             cx.notify();
@@ -220,7 +263,11 @@ impl KuzgunApp {
                     && s.files.selected.as_ref() == Some(&path)
                     && s.files.mode == mode
                 {
-                    let unchanged = s.files.text.as_ref().is_some_and(|(p, m, t)| p == &path && *m == mode && t == &text);
+                    let unchanged = s
+                        .files
+                        .text
+                        .as_ref()
+                        .is_some_and(|(p, m, t)| p == &path && *m == mode && t == &text);
                     if !unchanged {
                         s.files.text = Some((path.clone(), mode, text));
                         s.files.editor = None;
@@ -246,7 +293,10 @@ impl KuzgunApp {
         let Some(ix) = self.board.find_path(&s.ticket) else {
             return;
         };
-        let running = self.runs_of(ix).iter().any(|r| r.transcript == s.run && r.state == RunState::Running);
+        let running = self
+            .runs_of(ix)
+            .iter()
+            .any(|r| r.transcript == s.run && r.state == RunState::Running);
         let stale = s.files.loaded_at.is_none_or(|t| t.elapsed().as_secs() >= 4);
         if running && stale {
             self.load_files(cx);
@@ -275,13 +325,21 @@ impl KuzgunApp {
         };
         // The editor needs the window: build it once its text arrives.
         if let Some((path, mode, text)) = s.files.text.clone()
-            && s.files.editor.as_ref().is_none_or(|(p, m, _)| p != &path || *m != mode)
+            && s.files
+                .editor
+                .as_ref()
+                .is_none_or(|(p, m, _)| p != &path || *m != mode)
         {
             let lang = match mode {
                 ViewMode::Changes => "diff".to_string(),
                 ViewMode::File => files::language(&path),
             };
-            let state = cx.new(|cx| EditorState::new(window, cx).language(lang).line_number(true).default_value(text));
+            let state = cx.new(|cx| {
+                EditorState::new(window, cx)
+                    .language(lang)
+                    .line_number(true)
+                    .default_value(text)
+            });
             s.files.editor = Some((path, mode, state));
         }
         if s.files.query.is_none() {
@@ -296,8 +354,12 @@ impl KuzgunApp {
             s.files._query_sub = Some(sub);
         }
         let query_box = s.files.query.clone();
-        let status: Arc<HashMap<String, (char, usize, usize)>> =
-            Arc::new(snap.changes.iter().map(|c| (c.path.clone(), (c.status, c.added, c.removed))).collect());
+        let status: Arc<HashMap<String, (char, usize, usize)>> = Arc::new(
+            snap.changes
+                .iter()
+                .map(|c| (c.path.clone(), (c.status, c.added, c.removed)))
+                .collect(),
+        );
         let (green, red, yellow) = (theme.green, theme.red, theme.yellow);
         let color_of = move |c: char| match c {
             'A' => green,
@@ -336,18 +398,44 @@ impl KuzgunApp {
                             .text_sm()
                             .child(
                                 Icon::new(if folder {
-                                    if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder }
+                                    if entry.is_expanded() {
+                                        IconName::FolderOpen
+                                    } else {
+                                        IconName::Folder
+                                    }
                                 } else {
                                     IconName::FileText
                                 })
                                 .size(px(14.))
                                 .text_color(muted),
                             )
-                            .child(div().flex_1().min_w_0().truncate().text_color(tint.filter(|_| !folder).unwrap_or(fg)).child(label))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(tint.filter(|_| !folder).unwrap_or(fg))
+                                    .child(label),
+                            )
                             .when_some(mark.filter(|c| *c != '•'), |d, c| {
-                                d.child(div().flex_none().text_xs().font_family(crate::settings::mono_font()).text_color(color_of(c)).child(c.to_string()))
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .text_xs()
+                                        .font_family(crate::settings::mono_font())
+                                        .text_color(color_of(c))
+                                        .child(c.to_string()),
+                                )
                             })
-                            .when(mark == Some('•'), |d| d.child(div().flex_none().size(px(5.)).rounded_full().bg(muted.opacity(0.7)))),
+                            .when(mark == Some('•'), |d| {
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .size(px(5.))
+                                        .rounded_full()
+                                        .bg(muted.opacity(0.7)),
+                                )
+                            }),
                     )
                     .when(!folder, |item| {
                         item.on_click(move |_, _, cx| {
@@ -375,9 +463,20 @@ impl KuzgunApp {
                     .py_2()
                     .border_b_1()
                     .border_color(border)
-                    .child(div().text_xs().text_color(muted).truncate().child(snap.source.label()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .truncate()
+                            .child(snap.source.label()),
+                    )
                     .when_some(query_box, |d, q| {
-                        d.child(Input::new(&q).small().prefix(Icon::new(IconName::Search).size(px(13.)).text_color(muted)).cleanable(true))
+                        d.child(
+                            Input::new(&q)
+                                .small()
+                                .prefix(Icon::new(IconName::Search).size(px(13.)).text_color(muted))
+                                .cleanable(true),
+                        )
                     })
                     .child(
                         div()
@@ -385,7 +484,12 @@ impl KuzgunApp {
                             .items_center()
                             .gap_2()
                             .text_sm()
-                            .child(div().flex_1().text_color(fg).child(format!("{n_changed} changed · {} files", snap.files.len())))
+                            .child(
+                                div().flex_1().text_color(fg).child(format!(
+                                    "{n_changed} changed · {} files",
+                                    snap.files.len()
+                                )),
+                            )
                             .child(
                                 Button::new("files-changed-only")
                                     .xsmall()
@@ -421,8 +525,14 @@ impl KuzgunApp {
             Some(path) => {
                 let change = snap.change(&path).cloned();
                 let pos = changed.iter().position(|p| p == &path);
-                let prev = pos.and_then(|i| i.checked_sub(1)).and_then(|i| changed.get(i).cloned()).or_else(|| changed.last().cloned());
-                let next = pos.map(|i| i + 1).and_then(|i| changed.get(i).cloned()).or_else(|| changed.first().cloned());
+                let prev = pos
+                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|i| changed.get(i).cloned())
+                    .or_else(|| changed.last().cloned());
+                let next = pos
+                    .map(|i| i + 1)
+                    .and_then(|i| changed.get(i).cloned())
+                    .or_else(|| changed.first().cloned());
                 let open_path = self.session_file_on_disk(&path);
                 let seg = |id: &'static str, label: &'static str, m: ViewMode| {
                     Button::new(id)
@@ -455,11 +565,36 @@ impl KuzgunApp {
                             .px_3()
                             .border_b_1()
                             .border_color(border)
-                            .child(div().flex_1().min_w_0().truncate().text_sm().font_family(crate::settings::mono_font()).text_color(fg).child(path.clone()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_family(crate::settings::mono_font())
+                                    .text_color(fg)
+                                    .child(path.clone()),
+                            )
                             .when_some(change, |d, c| {
-                                d.child(div().text_xs().font_family(crate::settings::mono_font()).text_color(color_of(c.status)).child(c.status.to_string()))
-                                    .child(div().text_xs().text_color(theme.green).child(format!("+{}", c.added)))
-                                    .child(div().text_xs().text_color(theme.red).child(format!("−{}", c.removed)))
+                                d.child(
+                                    div()
+                                        .text_xs()
+                                        .font_family(crate::settings::mono_font())
+                                        .text_color(color_of(c.status))
+                                        .child(c.status.to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.green)
+                                        .child(format!("+{}", c.added)),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.red)
+                                        .child(format!("−{}", c.removed)),
+                                )
                             })
                             .child(seg("files-mode-changes", "Changes", ViewMode::Changes))
                             .child(seg("files-mode-file", "File", ViewMode::File))
@@ -496,7 +631,9 @@ impl KuzgunApp {
                                         .ghost()
                                         .icon(Icon::new(IconName::SquarePen))
                                         .tooltip("Open in the editor")
-                                        .on_click(cx.listener(move |this, _, _, cx| this.open_in_editor(&p, cx))),
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.open_in_editor(&p, cx)
+                                        })),
                                 )
                             }),
                     )
@@ -504,14 +641,31 @@ impl KuzgunApp {
                         Some((p, m, state)) if p == path && m == mode => div()
                             .flex_1()
                             .min_h_0()
-                            .child(Editor::new(&state).readonly(true).bordered(false).h(relative(1.)))
+                            .child(
+                                Editor::new(&state)
+                                    .readonly(true)
+                                    .bordered(false)
+                                    .h(relative(1.)),
+                            )
                             .into_any_element(),
-                        _ => div().flex_1().p_4().text_sm().text_color(muted).child("Reading…").into_any_element(),
+                        _ => div()
+                            .flex_1()
+                            .p_4()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("Reading…")
+                            .into_any_element(),
                     })
                     .into_any_element()
             }
         };
-        div().flex_1().min_h_0().flex().child(left).child(right).into_any_element()
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .child(left)
+            .child(right)
+            .into_any_element()
     }
 
     /// The file on disk, when the snapshot reads a working tree.
@@ -519,7 +673,9 @@ impl KuzgunApp {
         let snap = self.session.as_ref()?.files.snap.as_ref()?;
         let dir = match &snap.source {
             files::Source::Tree { dir, .. } => dir.clone(),
-            files::Source::Edits { repo } | files::Source::Commits { repo, .. } | files::Source::Landed { repo, .. } => repo.clone(),
+            files::Source::Edits { repo }
+            | files::Source::Commits { repo, .. }
+            | files::Source::Landed { repo, .. } => repo.clone(),
         };
         let p = dir.join(path);
         p.is_file().then_some(p)

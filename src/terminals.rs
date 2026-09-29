@@ -18,7 +18,9 @@ static INSTALLED: LazyLock<Vec<Terminal>> = LazyLock::new(|| {
     let dirs = [
         PathBuf::from("/Applications"),
         PathBuf::from("/System/Applications/Utilities"),
-        dirs::home_dir().map(|h| h.join("Applications")).unwrap_or_default(),
+        dirs::home_dir()
+            .map(|h| h.join("Applications"))
+            .unwrap_or_default(),
     ];
     KNOWN
         .iter()
@@ -26,7 +28,10 @@ static INSTALLED: LazyLock<Vec<Terminal>> = LazyLock::new(|| {
             dirs.iter()
                 .map(|d| d.join(format!("{name}.app")))
                 .find(|p| p.is_dir())
-                .map(|app| Terminal { name: name.to_string(), app })
+                .map(|app| Terminal {
+                    name: name.to_string(),
+                    app,
+                })
         })
         .collect()
 });
@@ -52,7 +57,10 @@ fn quote(s: &str) -> String {
 /// Opens a new terminal window in `repo` running `claude <command>`.
 pub fn start_agent(repo: &Path, command: &str) -> Result<String, String> {
     let term = chosen().ok_or("No terminal app found")?;
-    let script = std::env::temp_dir().join(format!("kuzgun-agent-{}.command", std::process::id() as u64 * 1000 + rand_suffix()));
+    let script = std::env::temp_dir().join(format!(
+        "kuzgun-agent-{}.command",
+        std::process::id() as u64 * 1000 + rand_suffix()
+    ));
     // A login shell finds `claude` on the person's PATH; the shell stays
     // open when the session ends.
     let body = format!(
@@ -61,7 +69,10 @@ pub fn start_agent(repo: &Path, command: &str) -> Result<String, String> {
         quote(command)
     );
     std::fs::write(&script, body).map_err(|e| e.to_string())?;
-    let _ = std::process::Command::new("chmod").arg("+x").arg(&script).status();
+    let _ = std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&script)
+        .status();
     let s = script.display().to_string();
     let result = match term.name.as_str() {
         "Ghostty" => std::process::Command::new("open")
@@ -72,11 +83,19 @@ pub fn start_agent(repo: &Path, command: &str) -> Result<String, String> {
         "WezTerm" => std::process::Command::new(term.app.join("Contents/MacOS/wezterm"))
             .args(["start", "--", "/bin/zsh", &s])
             .spawn(),
-        "kitty" => std::process::Command::new(term.app.join("Contents/MacOS/kitty")).args(["/bin/zsh", &s]).spawn(),
+        "kitty" => std::process::Command::new(term.app.join("Contents/MacOS/kitty"))
+            .args(["/bin/zsh", &s])
+            .spawn(),
         // Terminal, iTerm and Warp open a `.command` file as a new session.
-        _ => std::process::Command::new("open").arg("-a").arg(&term.app).arg(&script).spawn(),
+        _ => std::process::Command::new("open")
+            .arg("-a")
+            .arg(&term.app)
+            .arg(&script)
+            .spawn(),
     };
-    result.map(|_| term.name.clone()).map_err(|e| format!("{}: {e}", term.name))
+    result
+        .map(|_| term.name.clone())
+        .map_err(|e| format!("{}: {e}", term.name))
 }
 
 fn rand_suffix() -> u64 {

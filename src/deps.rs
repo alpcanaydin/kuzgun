@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::component::theme::ActiveTheme as _;
+use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -32,17 +32,26 @@ impl KuzgunApp {
         let (muted, fg, border) = (t.muted_foreground, t.foreground, t.border);
         let light = crate::settings::is_light(cx);
         let z = self.deps_zoom;
-        let (node_w, node_h, col_gap, row_gap) = (NODE_W0 * z, NODE_H0 * z, COL_GAP0 * z, ROW_GAP0 * z);
+        let (node_w, node_h, col_gap, row_gap) =
+            (NODE_W0 * z, NODE_H0 * z, COL_GAP0 * z, ROW_GAP0 * z);
         let scope = self.project_ix();
         let b = &self.board;
 
         // Open tickets in scope (closed ones block nothing).
         let nodes: Vec<usize> = (0..b.tickets.len())
-            .filter(|&i| scope.is_none_or(|p| b.tickets[i].project == p) && !b.tickets[i].category.is_closed())
+            .filter(|&i| {
+                scope.is_none_or(|p| b.tickets[i].project == p)
+                    && !b.tickets[i].category.is_closed()
+            })
             .collect();
         let in_set: HashMap<usize, ()> = nodes.iter().map(|&i| (i, ())).collect();
         let open_blockers = |i: usize| -> Vec<usize> {
-            b.tickets[i].blocked_by.iter().copied().filter(|j| in_set.contains_key(j)).collect()
+            b.tickets[i]
+                .blocked_by
+                .iter()
+                .copied()
+                .filter(|j| in_set.contains_key(j))
+                .collect()
         };
         // Layer = 1 + deepest blocker's layer; a guard stops cycles.
         let mut layer: HashMap<usize, usize> = HashMap::new();
@@ -59,7 +68,11 @@ impl KuzgunApp {
                 return 0;
             }
             stack.push(i);
-            let l = blockers(i).into_iter().map(|j| depth(j, layer, blockers, stack) + 1).max().unwrap_or(0);
+            let l = blockers(i)
+                .into_iter()
+                .map(|j| depth(j, layer, blockers, stack) + 1)
+                .max()
+                .unwrap_or(0);
             stack.pop();
             layer.insert(i, l);
             l
@@ -74,7 +87,11 @@ impl KuzgunApp {
             columns[layer[&i]].push(i);
         }
         // Inside a layer: by milestone, then number, so related work sits together.
-        let milestone_key = b.facets.iter().find(|f| model::is_milestone(&f.key)).map(|f| f.key.clone());
+        let milestone_key = b
+            .facets
+            .iter()
+            .find(|f| model::is_milestone(&f.key))
+            .map(|f| f.key.clone());
         for col in &mut columns {
             col.sort_by_key(|&i| {
                 let m = milestone_key
@@ -82,7 +99,11 @@ impl KuzgunApp {
                     .and_then(|k| b.tickets[i].field_values(k).into_iter().next())
                     .map(|v| model::natural_key(&v))
                     .unwrap_or_default();
-                (m, b.tickets[i].project, b.tickets[i].num.unwrap_or(u32::MAX))
+                (
+                    m,
+                    b.tickets[i].project,
+                    b.tickets[i].num.unwrap_or(u32::MAX),
+                )
             });
         }
         let mut pos: HashMap<usize, (f32, f32)> = HashMap::new();
@@ -94,7 +115,9 @@ impl KuzgunApp {
             }
         }
         let width = PAD * 2. + layers as f32 * (node_w + col_gap);
-        let height = PAD * 2. + HEAD + columns.iter().map(Vec::len).max().unwrap_or(0) as f32 * (node_h + row_gap);
+        let height = PAD * 2.
+            + HEAD
+            + columns.iter().map(Vec::len).max().unwrap_or(0) as f32 * (node_h + row_gap);
 
         // Focus: the chain of the picked ticket (what it waits on, what
         // waits on it); the rest fades.
@@ -132,11 +155,21 @@ impl KuzgunApp {
                 let (Some(&(x1, y1)), Some(&(x2, y2))) = (pos.get(&j), pos.get(&i)) else {
                     continue;
                 };
-                let hot = chain.as_ref().is_some_and(|c| c.contains(&i) && c.contains(&j));
-                edges.push((point(px(x1 + node_w), px(y1 + node_h / 2.)), point(px(x2), px(y2 + node_h / 2.)), hot));
+                let hot = chain
+                    .as_ref()
+                    .is_some_and(|c| c.contains(&i) && c.contains(&j));
+                edges.push((
+                    point(px(x1 + node_w), px(y1 + node_h / 2.)),
+                    point(px(x2), px(y2 + node_h / 2.)),
+                    hot,
+                ));
             }
         }
-        let edge_color = if chain.is_some() { muted.opacity(0.12) } else { muted.opacity(0.35) };
+        let edge_color = if chain.is_some() {
+            muted.opacity(0.12)
+        } else {
+            muted.opacity(0.35)
+        };
         let hot_color = t.accent;
         let edges_layer = canvas(
             move |_, _, _| edges,
@@ -161,7 +194,11 @@ impl KuzgunApp {
         .h(px(height));
 
         let layer_heads = (0..layers).map(|c| {
-            let label = if c == 0 { "No open blockers".to_string() } else { format!("After {c} step{}", if c == 1 { "" } else { "s" }) };
+            let label = if c == 0 {
+                "No open blockers".to_string()
+            } else {
+                format!("After {c} step{}", if c == 1 { "" } else { "s" })
+            };
             div()
                 .absolute()
                 .left(px(PAD + c as f32 * (node_w + col_gap)))
@@ -180,7 +217,10 @@ impl KuzgunApp {
                 let (x, y) = *pos.get(&i)?;
                 let tk = &b.tickets[i];
                 let frontier = self.idx.frontier.get(i).copied().unwrap_or(false);
-                let running = tk.agent.as_ref().is_some_and(|a| a.state == crate::agents::RunState::Running);
+                let running = tk
+                    .agent
+                    .as_ref()
+                    .is_some_and(|a| a.state == crate::agents::RunState::Running);
                 let hitl = self.idx.modes.get(i).copied().flatten() == Some(Mode::Hitl);
                 let path = tk.path.clone();
                 let sel = selected == Some(i);
@@ -216,19 +256,53 @@ impl KuzgunApp {
                                 .flex()
                                 .items_center()
                                 .gap_1p5()
-                                .child(icons::status_icon(tk.category).size(px(12. * z)).text_color(icons::status_color(tk.category, light)))
-                                .child(div().text_size(px(11. * z)).font_family(crate::settings::mono_font()).text_color(muted).child(tk.key.clone()))
+                                .child(
+                                    icons::status_icon(tk.category)
+                                        .size(px(12. * z))
+                                        .text_color(icons::status_color(tk.category, light)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11. * z))
+                                        .font_family(crate::settings::mono_font())
+                                        .text_color(muted)
+                                        .child(tk.key.clone()),
+                                )
                                 .child(div().flex_1())
-                                .when(running, |d| d.child(Icon::new(IconName::Bot).size(px(12. * z)).text_color(t.green)))
-                                .when(hitl, |d| d.child(Icon::new(IconName::Hand).size(px(12. * z)).text_color(t.accent))),
+                                .when(running, |d| {
+                                    d.child(
+                                        Icon::new(IconName::Bot)
+                                            .size(px(12. * z))
+                                            .text_color(t.green),
+                                    )
+                                })
+                                .when(hitl, |d| {
+                                    d.child(
+                                        Icon::new(IconName::Hand)
+                                            .size(px(12. * z))
+                                            .text_color(t.accent),
+                                    )
+                                }),
                         )
-                        .when(z >= 0.55, |d| d.child(div().truncate().text_size(px(13. * z)).text_color(fg).child(tk.title.clone())))
+                        .when(z >= 0.55, |d| {
+                            d.child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(13. * z))
+                                    .text_color(fg)
+                                    .child(tk.title.clone()),
+                            )
+                        })
                         .on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
                             cx.stop_propagation();
                             if e.click_count() >= 2 {
                                 this.open_detail(path.clone(), true, w, cx);
                             } else {
-                                if this.detail.as_ref().is_some_and(|d| !d.full && d.path == path) {
+                                if this
+                                    .detail
+                                    .as_ref()
+                                    .is_some_and(|d| !d.full && d.path == path)
+                                {
                                     this.detail = None;
                                     cx.notify();
                                 } else {
@@ -271,7 +345,8 @@ impl KuzgunApp {
                     b.origin.y + b.size.height - px(mh + MINI_PAD * 2. + 12.) + px(MINI_PAD),
                 );
                 let c = (p - origin) * (1. / scale);
-                this.deps_scroll.set_offset(point(b.size.width / 2. - c.x, b.size.height / 2. - c.y));
+                this.deps_scroll
+                    .set_offset(point(b.size.width / 2. - c.x, b.size.height / 2. - c.y));
             };
             div()
                 .id("deps-mini")
@@ -327,13 +402,21 @@ impl KuzgunApp {
                         move |bounds, (rects, (fx, fy, fw, fh)), window, _| {
                             let o = bounds.origin;
                             for (x, y, c) in rects {
-                                window.paint_quad(fill(Bounds::new(o + point(px(x), px(y)), size(px(nw), px(nh))), c));
+                                window.paint_quad(fill(
+                                    Bounds::new(o + point(px(x), px(y)), size(px(nw), px(nh))),
+                                    c,
+                                ));
                             }
                             let r = Bounds::new(o + point(px(fx), px(fy)), size(px(fw), px(fh)))
                                 .intersect(&bounds);
-                            window.paint_quad(
-                                quad(r, px(2.), accent.opacity(0.08), px(1.), accent, BorderStyle::default()),
-                            );
+                            window.paint_quad(quad(
+                                r,
+                                px(2.),
+                                accent.opacity(0.08),
+                                px(1.),
+                                accent,
+                                BorderStyle::default(),
+                            ));
                         },
                     )
                     .w(px(mw))
@@ -341,12 +424,24 @@ impl KuzgunApp {
                 )
         });
         let step = |dir: i32| {
-            move |this: &mut KuzgunApp, _: &ClickEvent, _: &mut Window, cx: &mut Context<KuzgunApp>| {
+            move |this: &mut KuzgunApp,
+                  _: &ClickEvent,
+                  _: &mut Window,
+                  cx: &mut Context<KuzgunApp>| {
                 let z = this.deps_zoom;
                 this.deps_zoom = if dir > 0 {
-                    ZOOMS.iter().copied().find(|&v| v > z + 0.01).unwrap_or(ZOOMS[ZOOMS.len() - 1])
+                    ZOOMS
+                        .iter()
+                        .copied()
+                        .find(|&v| v > z + 0.01)
+                        .unwrap_or(ZOOMS[ZOOMS.len() - 1])
                 } else {
-                    ZOOMS.iter().rev().copied().find(|&v| v < z - 0.01).unwrap_or(ZOOMS[0])
+                    ZOOMS
+                        .iter()
+                        .rev()
+                        .copied()
+                        .find(|&v| v < z - 0.01)
+                        .unwrap_or(ZOOMS[0])
                 };
                 cx.notify();
             }
@@ -357,7 +452,14 @@ impl KuzgunApp {
             .flex_none()
             .items_center()
             .gap_1()
-            .child(Button::new("zoom-out").ghost().xsmall().icon(Icon::new(IconName::Minus).text_color(muted)).tooltip("Zoom out").on_click(cx.listener(step(-1))))
+            .child(
+                Button::new("zoom-out")
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(IconName::Minus).text_color(muted))
+                    .tooltip("Zoom out")
+                    .on_click(cx.listener(step(-1))),
+            )
             .child(
                 Button::new("zoom-reset")
                     .ghost()
@@ -375,7 +477,14 @@ impl KuzgunApp {
                         cx.notify();
                     })),
             )
-            .child(Button::new("zoom-in").ghost().xsmall().icon(Icon::new(IconName::Plus).text_color(muted)).tooltip("Zoom in").on_click(cx.listener(step(1))))
+            .child(
+                Button::new("zoom-in")
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(IconName::Plus).text_color(muted))
+                    .tooltip("Zoom in")
+                    .on_click(cx.listener(step(1))),
+            )
             .child(
                 Button::new("zoom-fit")
                     .ghost()
@@ -385,7 +494,11 @@ impl KuzgunApp {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let avail = f32::from(window.viewport_size().width) - 300.;
                         let want = (avail / fit_w).clamp(ZOOMS[0], 1.);
-                        this.deps_zoom = *ZOOMS.iter().rev().find(|&&v| v <= want).unwrap_or(&ZOOMS[0]);
+                        this.deps_zoom = *ZOOMS
+                            .iter()
+                            .rev()
+                            .find(|&&v| v <= want)
+                            .unwrap_or(&ZOOMS[0]);
                         this.deps_scroll.set_offset(point(px(0.), px(0.)));
                         cx.notify();
                     })),
@@ -408,7 +521,13 @@ impl KuzgunApp {
                     .border_b_1()
                     .border_color(border)
                     .child(Icon::new(IconName::Network).size(px(16.)).text_color(muted))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(fg).child("Dependencies"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(fg)
+                            .child("Dependencies"),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -421,73 +540,88 @@ impl KuzgunApp {
                     .child(zoom_bar),
             )
             .child(
-                div().flex_1().min_h_0().relative().child(
                 div()
-                    .id("deps-scroll")
-                    .size_full()
-                    .overflow_scroll()
-                    .track_scroll(&self.deps_scroll)
-                    .on_pinch(cx.listener(|this, e: &PinchEvent, _, cx| {
-                        let z0 = this.deps_zoom;
-                        let z1 = (z0 * (1. + e.delta)).clamp(ZOOMS[0], ZOOMS[ZOOMS.len() - 1]);
-                        if (z1 - z0).abs() < f32::EPSILON {
-                            return;
-                        }
-                        // Keep the point under the fingers in place.
-                        let local = e.position - this.deps_scroll.bounds().origin;
-                        let content = local - this.deps_scroll.offset();
-                        this.deps_zoom = z1;
-                        this.deps_scroll.set_offset(local - content * (z1 / z0));
-                        cx.notify();
-                    }))
-                    .cursor(if self.deps_drag.is_some() { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                            this.deps_drag = Some((e.position, this.deps_scroll.offset()));
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
-                        if let Some((start, offset)) = this.deps_drag {
-                            if e.pressed_button != Some(MouseButton::Left) {
-                                this.deps_drag = None;
-                                cx.notify();
-                                return;
-                            }
-                            this.deps_scroll.set_offset(offset + (e.position - start));
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, e: &MouseUpEvent, _, cx| {
-                            // A click on the empty map (no drag) clears the focus.
-                            if let Some((start, _)) = this.deps_drag.take() {
-                                let d = e.position - start;
-                                if f32::from(d.x).abs() < 3. && f32::from(d.y).abs() < 3. {
-                                    this.detail = None;
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(
+                        div()
+                            .id("deps-scroll")
+                            .size_full()
+                            .overflow_scroll()
+                            .track_scroll(&self.deps_scroll)
+                            .on_pinch(cx.listener(|this, e: &PinchEvent, _, cx| {
+                                let z0 = this.deps_zoom;
+                                let z1 =
+                                    (z0 * (1. + e.delta)).clamp(ZOOMS[0], ZOOMS[ZOOMS.len() - 1]);
+                                if (z1 - z0).abs() < f32::EPSILON {
+                                    return;
                                 }
-                            }
-                            cx.notify();
-                        }),
+                                // Keep the point under the fingers in place.
+                                let local = e.position - this.deps_scroll.bounds().origin;
+                                let content = local - this.deps_scroll.offset();
+                                this.deps_zoom = z1;
+                                this.deps_scroll.set_offset(local - content * (z1 / z0));
+                                cx.notify();
+                            }))
+                            .cursor(if self.deps_drag.is_some() {
+                                CursorStyle::ClosedHand
+                            } else {
+                                CursorStyle::OpenHand
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                                    this.deps_drag = Some((e.position, this.deps_scroll.offset()));
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                                if let Some((start, offset)) = this.deps_drag {
+                                    if e.pressed_button != Some(MouseButton::Left) {
+                                        this.deps_drag = None;
+                                        cx.notify();
+                                        return;
+                                    }
+                                    this.deps_scroll.set_offset(offset + (e.position - start));
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, e: &MouseUpEvent, _, cx| {
+                                    // A click on the empty map (no drag) clears the focus.
+                                    if let Some((start, _)) = this.deps_drag.take() {
+                                        let d = e.position - start;
+                                        if f32::from(d.x).abs() < 3. && f32::from(d.y).abs() < 3. {
+                                            this.detail = None;
+                                        }
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .when(empty, |d| {
+                                d.child(
+                                    div()
+                                        .p_8()
+                                        .text_sm()
+                                        .text_color(muted)
+                                        .child("No open tickets here."),
+                                )
+                            })
+                            .when(!empty, |d| {
+                                d.child(
+                                    div()
+                                        .relative()
+                                        .w(px(width))
+                                        .h(px(height))
+                                        .child(edges_layer)
+                                        .children(layer_heads)
+                                        .children(node_els),
+                                )
+                            }),
                     )
-                    .when(empty, |d| {
-                        d.child(div().p_8().text_sm().text_color(muted).child("No open tickets here."))
-                    })
-                    .when(!empty, |d| {
-                        d.child(
-                            div()
-                                .relative()
-                                .w(px(width))
-                                .h(px(height))
-                                .child(edges_layer)
-                                .children(layer_heads)
-                                .children(node_els),
-                        )
-                    }),
-                )
-                .children(mini),
+                    .children(mini),
             )
     }
 }

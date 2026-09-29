@@ -10,14 +10,29 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &HideApp, cx| cx.hide());
     cx.on_action(|_: &OpenSettings, cx| crate::settings::SettingsWindow::open(cx));
+    cx.on_action(|_: &CheckForUpdates, _| crate::updater::check_for_updates());
+    cx.on_action(|_: &RestartToUpdate, _| crate::updater::restart_to_update());
+    refresh(cx);
+}
+
+/// (Re)build the menu bar; the app menu's update item follows the updater.
+pub fn refresh(cx: &mut App) {
+    let update = if crate::updater::ready(cx).is_some() {
+        Some(MenuItem::action("Restart to Update…", RestartToUpdate))
+    } else if crate::updater::enabled(cx) {
+        Some(MenuItem::action("Check for Updates…", CheckForUpdates))
+    } else {
+        None
+    };
+    let mut app_menu = vec![MenuItem::action("Settings…", OpenSettings)];
+    app_menu.extend(update);
+    app_menu.push(MenuItem::action("Command Palette…", TogglePalette));
     cx.set_menus([
-        Menu::new("Kuzgun").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Command Palette…", TogglePalette),
+        Menu::new("Kuzgun").items(app_menu.into_iter().chain([
             MenuItem::separator(),
             MenuItem::action("Hide Kuzgun", HideApp),
             MenuItem::action("Quit Kuzgun", Quit),
-        ]),
+        ])),
         Menu::new("File").items([
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::action("Go to Ticket…", QuickOpenTicket),

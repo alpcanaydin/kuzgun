@@ -225,7 +225,11 @@ pub fn apply(cx: &mut App) {
             use gpui_kit::component::theme::ThemeToken;
             let c = theme.colors.primary;
             let white: Hsla = rgb(0xFFFFFF).into();
-            let shade: Hsla = if light { rgb(0x000000).into() } else { rgb(0xFFFFFF).into() };
+            let shade: Hsla = if light {
+                rgb(0x000000).into()
+            } else {
+                rgb(0xFFFFFF).into()
+            };
             let hover = c.blend(shade.opacity(0.12));
             let active = c.blend(shade.opacity(0.22));
             theme.colors.primary_foreground = white;

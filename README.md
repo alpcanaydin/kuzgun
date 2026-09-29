@@ -63,12 +63,90 @@ exists, so renamed triage labels still land in the right columns.
 | `cmd-r` | Reload |
 | `cmd-w` | Close the board |
 
-## Build
+## Getting started
+
+> [!IMPORTANT]
+> Kuzgun runs on **macOS 14 (Sonoma) or later** on Apple Silicon.
+
+### Download
+
+Get the latest `Kuzgun-<version>-arm64.dmg` from the
+[Releases page](https://github.com/alpcanaydin/kuzgun/releases/latest). Open it and
+drag **Kuzgun** into **Applications**.
+
+Or install it with Homebrew:
+
+```sh
+brew install alpcanaydin/kuzgun/kuzgun
+```
+
+Releases are signed with a Developer ID and notarized by Apple, so they open
+without Gatekeeper warnings.
+
+### Updates
+
+Kuzgun updates itself. It checks for a new version once a day and downloads it
+in the background. When the update is ready, a **Restart to Update** button
+appears in the status bar. If you don't click it, the update installs the next
+time you quit Kuzgun. You can also check right away with **Kuzgun ▸ Check for
+Updates…**. Updates are signed, and Kuzgun verifies each one before installing it.
+
+If you installed with Homebrew, `brew upgrade kuzgun` works too.
+
+### Build from source
+
+Prerequisites: the Rust toolchain in `rust-toolchain.toml` and the Xcode
+Command Line Tools.
 
 ```sh
 cargo run --release -- ~/Projects/they/.scratch   # open a folder directly
-scripts/bundle.sh                                # target/release/bundle/Kuzgun.app
+cargo run --release -- ~/Projects/they --ticket WS-5 --files   # a ticket's session, on its files
+scripts/bundle.sh                                # → target/release/bundle/Kuzgun.app
 ```
 
+`kuzgun --inspect <folder>` prints what Kuzgun reads from a tracker, and
+`kuzgun --conversation claude|codex <file>` sums up an agent transcript.
+
+### Releasing (maintainers)
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`). The workflow:
+
+1. Builds the app and signs it with the Developer ID.
+2. Notarizes and staples both the app and the DMG.
+3. Signs the DMG for Sparkle and writes the update feed (`appcast.xml`).
+4. Publishes a GitHub release with the DMG and the feed.
+5. Updates the Homebrew cask.
+
+One-time setup: run `scripts/setup-release.sh`. The wizard walks you through
+the certificate, the notarization key, the update-signing key and the Homebrew
+token, and checks each one. It writes the update key's public half to
+`assets/sparkle-public-key`; commit that file. After that, a release is one command:
+
+```sh
+scripts/tag-release.sh 0.2.0   # bumps the version, commits, tags v0.2.0, pushes
+```
+
+To build a release locally, run `scripts/release.sh`. It uses the same signing
+and notarization credentials, stored in your keychain.
+
+> [!TIP]
+> If you have an Apple Development certificate, `cargo run` signs the dev
+> binary with it (see `scripts/sign-dev.sh`). Then macOS keeps the
+> notification permission across rebuilds.
+
+### Checks
+
+CI runs the same checks you can run locally (`mise install` once):
+
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+mise exec -- actionlint
+mise exec -- shellcheck --severity=warning scripts/*.sh .github/scripts/*.sh
+```
+
+## Where your data lives
+
 Settings, saved boards and view state live in
-`~/Library/Application Support/kuzgun/`.
+`~/Library/Application Support/kuzgun/`. Kuzgun never writes to a board.

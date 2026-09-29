@@ -1,0 +1,3 @@
+# `cargo run` signs the dev binary first (see scripts/sign-dev.sh).
+[target.aarch64-apple-darwin]
+runner = "scripts/run-signed.sh"

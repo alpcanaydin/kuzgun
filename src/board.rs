@@ -24,7 +24,11 @@ use crate::store::{Completed, Layout, Ordering};
 /// the agent gets a robot.
 pub fn avatar(name: &str, size: f32, ring: Hsla) -> AnyElement {
     let is_agent = name == AGENT_NAME;
-    let bg = if is_agent { hsla(0.42, 0.55, 0.45, 1.) } else { icons::tag_color(name) };
+    let bg = if is_agent {
+        hsla(0.42, 0.55, 0.45, 1.)
+    } else {
+        icons::tag_color(name)
+    };
     let initials: String = name
         .split_whitespace()
         .filter_map(|w| w.chars().next())
@@ -44,19 +48,33 @@ pub fn avatar(name: &str, size: f32, ring: Hsla) -> AnyElement {
         .text_size(px(size * 0.42))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(0x111111))
-        .when(is_agent, |d| d.child(Icon::new(IconName::Bot).size(px(size * 0.6)).text_color(rgb(0x111111))))
+        .when(is_agent, |d| {
+            d.child(
+                Icon::new(IconName::Bot)
+                    .size(px(size * 0.6))
+                    .text_color(rgb(0x111111)),
+            )
+        })
         .when(!is_agent, |d| d.child(initials))
         .into_any_element()
 }
 
 /// Overlapping avatars (at most `max`, then `+N`).
-pub fn avatar_group(names: &[String], size: f32, ring: Hsla, max: usize, muted: Hsla) -> AnyElement {
+pub fn avatar_group(
+    names: &[String],
+    size: f32,
+    ring: Hsla,
+    max: usize,
+    muted: Hsla,
+) -> AnyElement {
     let extra = names.len().saturating_sub(max);
     div()
         .flex()
         .items_center()
         .children(names.iter().take(max).enumerate().map(|(i, n)| {
-            div().when(i > 0, |d| d.ml(px(-size * 0.3))).child(avatar(n, size, ring))
+            div()
+                .when(i > 0, |d| d.ml(px(-size * 0.3)))
+                .child(avatar(n, size, ring))
         }))
         .when(extra > 0, |d| {
             d.child(
@@ -99,13 +117,27 @@ const COL_GAP: f32 = 8.;
 const BOARD_PAD: f32 = 12.;
 const HIDDEN_W: f32 = 220.;
 
+/// A filter chip: its label and what removing it does.
+type Chip = (String, Rc<dyn Fn(&mut KuzgunApp)>);
+/// A Filter menu entry: the key and its values as (label, value, count).
+type FilterGroup = (String, Vec<(String, String, usize)>);
+
 fn tip(text: String) -> impl Fn(&mut Window, &mut App) -> AnyView {
-    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).max_w(px(360.)).build(window, cx)
+    move |window, cx| {
+        gpui_kit::component::tooltip::Tooltip::new(text.clone())
+            .max_w(px(360.))
+            .build(window, cx)
+    }
 }
 
 impl KuzgunApp {
     /// Draws one region of the board window (see `region.rs`).
-    pub fn render_region(&mut self, kind: crate::region::RegionKind, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_region(
+        &mut self,
+        kind: crate::region::RegionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         use crate::region::RegionKind;
         let fill = |e: AnyElement| div().size_full().flex().child(e).into_any_element();
         match kind {
@@ -113,12 +145,20 @@ impl KuzgunApp {
             RegionKind::Main => fill(self.render_main(window, cx)),
             RegionKind::Detail => {
                 let side = self.detail.as_ref().is_some_and(|d| !d.full);
-                fill(if side { self.render_detail(window, cx).into_any_element() } else { div().into_any_element() })
+                fill(if side {
+                    self.render_detail(window, cx).into_any_element()
+                } else {
+                    div().into_any_element()
+                })
             }
             RegionKind::Pill => div()
                 .size_full()
                 .relative()
-                .children(if self.session.is_some() { self.render_session_pill(cx) } else { None })
+                .children(if self.session.is_some() {
+                    self.render_session_pill(cx)
+                } else {
+                    None
+                })
                 .into_any_element(),
         }
     }
@@ -155,27 +195,58 @@ impl KuzgunApp {
         }
     }
 
-    pub fn render_board(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub fn render_board(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let _ = window;
         let full = self.detail.as_ref().is_some_and(|d| d.full);
         let side = self.detail.is_some() && !full;
         let detail_w = self.view.detail_w.unwrap_or(620.);
         let regions = self.regions(cx);
-        let sidebar = (!self.view.sidebar_hidden)
-            .then(|| regions.sidebar.clone().cached(StyleRefinement::default().w(px(236.)).flex_none().h_full()).into_any_element());
+        let sidebar = (!self.view.sidebar_hidden).then(|| {
+            regions
+                .sidebar
+                .clone()
+                .cached(StyleRefinement::default().w(px(236.)).flex_none().h_full())
+                .into_any_element()
+        });
         let main = div()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .relative()
             .flex()
-            .child(regions.main.clone().cached(StyleRefinement::default().flex_1().min_w_0().min_h_0().h_full()))
+            .child(
+                regions.main.clone().cached(
+                    StyleRefinement::default()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .h_full(),
+                ),
+            )
             .when(self.session.is_some(), |d| {
-                d.child(regions.pill.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full()))
+                d.child(
+                    regions.pill.clone().cached(
+                        StyleRefinement::default()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                    ),
+                )
             });
 
         let border = cx.theme().border;
-        let detail = side.then(|| regions.detail.clone().cached(StyleRefinement::default().size_full()).into_any_element());
+        let detail = side.then(|| {
+            regions
+                .detail
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        });
         div()
             .id("board")
             .key_context(BOARD)
@@ -191,7 +262,11 @@ impl KuzgunApp {
             .on_action(cx.listener(|this, _: &NextTicket, w, cx| this.move_selection(0, 1, w, cx)))
             .on_action(cx.listener(|this, _: &PrevTicket, w, cx| this.move_selection(0, -1, w, cx)))
             .on_action(cx.listener(|this, _: &Peek, w, cx| {
-                if this.detail.as_ref().is_some_and(|d| !d.is_doc && Some(&d.path) == this.selected.as_ref()) {
+                if this
+                    .detail
+                    .as_ref()
+                    .is_some_and(|d| !d.is_doc && Some(&d.path) == this.selected.as_ref())
+                {
                     this.detail = None;
                     cx.notify();
                 } else if let Some(p) = this.selected.clone() {
@@ -285,9 +360,13 @@ impl KuzgunApp {
                 .hover(|d| d.text_color(fg))
                 .child(title.to_uppercase())
                 .child(
-                    Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-                        .size(px(11.))
-                        .text_color(muted.opacity(0.6)),
+                    Icon::new(if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(11.))
+                    .text_color(muted.opacity(0.6)),
                 )
                 .on_click(move |_, _, cx| {
                     let key = key.clone();
@@ -297,7 +376,14 @@ impl KuzgunApp {
                     })
                 })
         };
-        let count = |n: usize| div().ml_auto().flex_none().text_xs().text_color(muted.opacity(0.7)).child(n.to_string());
+        let count = |n: usize| {
+            div()
+                .ml_auto()
+                .flex_none()
+                .text_xs()
+                .text_color(muted.opacity(0.7))
+                .child(n.to_string())
+        };
 
         let mut col = div()
             .id("sidebar")
@@ -323,35 +409,47 @@ impl KuzgunApp {
                     })),
             )
             .child(
-                row("deps".into(), self.view.page == crate::store::Page::Dependencies)
-                    .child(Icon::new(IconName::Network).size(px(14.)))
-                    .child("Dependencies")
-                    .on_click(cx.listener(|this, _, w, cx| {
-                        this.view.page = crate::store::Page::Dependencies;
-                        this.detail = None;
-                        this.session = None;
-                        this.save_view();
-                        this.board_focus.focus(w, cx);
-                        cx.notify();
-                    })),
+                row(
+                    "deps".into(),
+                    self.view.page == crate::store::Page::Dependencies,
+                )
+                .child(Icon::new(IconName::Network).size(px(14.)))
+                .child("Dependencies")
+                .on_click(cx.listener(|this, _, w, cx| {
+                    this.view.page = crate::store::Page::Dependencies;
+                    this.detail = None;
+                    this.session = None;
+                    this.save_view();
+                    this.board_focus.focus(w, cx);
+                    cx.notify();
+                })),
             )
             .child(
-                row("agents".into(), self.view.page == crate::store::Page::Agents)
-                    .child(Icon::new(IconName::Bot).size(px(14.)))
-                    .child("Agents")
-                    .child(count(self.agent_runs.iter().filter(|r| r.state == crate::agents::RunState::Running).count()))
-                    .on_click(cx.listener(|this, _, w, cx| {
-                        this.view.page = crate::store::Page::Agents;
-                        this.detail = None;
-                        this.session = None;
-                        this.save_view();
-                        this.board_focus.focus(w, cx);
-                        cx.notify();
-                    })),
+                row(
+                    "agents".into(),
+                    self.view.page == crate::store::Page::Agents,
+                )
+                .child(Icon::new(IconName::Bot).size(px(14.)))
+                .child("Agents")
+                .child(count(
+                    self.agent_runs
+                        .iter()
+                        .filter(|r| r.state == crate::agents::RunState::Running)
+                        .count(),
+                ))
+                .on_click(cx.listener(|this, _, w, cx| {
+                    this.view.page = crate::store::Page::Agents;
+                    this.detail = None;
+                    this.session = None;
+                    this.save_view();
+                    this.board_focus.focus(w, cx);
+                    cx.notify();
+                })),
             )
             .child(header("Projects"));
         let projects_open = is_open("Projects");
-        col = col.when(projects_open, |col| col.child(
+        col = col.when(projects_open, |col| {
+            col.child(
                 row("proj-all".into(), self.view.project.is_none())
                     .child(Icon::new(IconName::Layers).size(px(14.)))
                     .child("All projects")
@@ -362,10 +460,15 @@ impl KuzgunApp {
                         this.save_view();
                         cx.notify();
                     })),
-            ));
+            )
+        });
         let show_finished = self.view.show_finished_projects;
         let mut finished_hidden = 0;
-        let order = if projects_open { self.project_order() } else { Vec::new() };
+        let order = if projects_open {
+            self.project_order()
+        } else {
+            Vec::new()
+        };
         for pi in order {
             let p = &self.board.projects[pi];
             let active_project = self.view.project.as_deref() == Some(p.name.as_str());
@@ -378,19 +481,40 @@ impl KuzgunApp {
                 .tickets
                 .iter()
                 .filter(|t| t.project == pi)
-                .fold((0, 0), |(n, d), t| (n + 1, d + t.category.is_closed() as usize));
-            let frac = if total == 0 { 0. } else { done as f32 / total as f32 };
+                .fold((0, 0), |(n, d), t| {
+                    (n + 1, d + t.category.is_closed() as usize)
+                });
+            let frac = if total == 0 {
+                0.
+            } else {
+                done as f32 / total as f32
+            };
             let active = self.view.project.as_deref() == Some(p.name.as_str());
             let name = p.name.clone();
-            let kind = if p.map.is_some() { "wayfinder map" } else { "spec" };
+            let kind = if p.map.is_some() {
+                "wayfinder map"
+            } else {
+                "spec"
+            };
             col = col.child(
                 row(("proj", pi).into(), active)
-                    .child(icons::ring(frac).size(px(14.)).text_color(icons::tag_color(&p.name)))
+                    .child(
+                        icons::ring(frac)
+                            .size(px(14.))
+                            .text_color(icons::tag_color(&p.name)),
+                    )
                     .child(div().flex_1().min_w_0().truncate().child(p.title.clone()))
                     .children(p.docs.iter().enumerate().map(|(di, d)| {
                         let path = d.path.clone();
-                        let open = self.detail.as_ref().is_some_and(|x| x.is_doc && x.path == d.path);
-                        let icon = if d.name.eq_ignore_ascii_case("map.md") { IconName::Map } else { IconName::BookOpen };
+                        let open = self
+                            .detail
+                            .as_ref()
+                            .is_some_and(|x| x.is_doc && x.path == d.path);
+                        let icon = if d.name.eq_ignore_ascii_case("map.md") {
+                            IconName::Map
+                        } else {
+                            IconName::BookOpen
+                        };
                         div()
                             .id(("doc", pi * 100 + di))
                             .flex_none()
@@ -421,7 +545,11 @@ impl KuzgunApp {
                         frac * 100.
                     )))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.view.project = if this.view.project.as_ref() == Some(&name) { None } else { Some(name.clone()) };
+                        this.view.project = if this.view.project.as_ref() == Some(&name) {
+                            None
+                        } else {
+                            Some(name.clone())
+                        };
                         this.show_board();
                         this.save_view();
                         cx.notify();
@@ -430,7 +558,11 @@ impl KuzgunApp {
         }
 
         if projects_open && (finished_hidden > 0 || show_finished) {
-            let label = if show_finished { "Hide finished projects".to_string() } else { format!("Show {finished_hidden} finished") };
+            let label = if show_finished {
+                "Hide finished projects".to_string()
+            } else {
+                format!("Show {finished_hidden} finished")
+            };
             col = col.child(
                 div()
                     .id("proj-finished")
@@ -445,7 +577,14 @@ impl KuzgunApp {
                     .text_color(muted)
                     .cursor_pointer()
                     .hover(|d| d.bg(muted.opacity(0.1)).text_color(fg))
-                    .child(Icon::new(if show_finished { IconName::EyeOff } else { IconName::Eye }).size(px(13.)))
+                    .child(
+                        Icon::new(if show_finished {
+                            IconName::EyeOff
+                        } else {
+                            IconName::Eye
+                        })
+                        .size(px(13.)),
+                    )
                     .child(label)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.view.show_finished_projects = !this.view.show_finished_projects;
@@ -455,7 +594,11 @@ impl KuzgunApp {
             );
         }
         col = col.child(header("Views"));
-        for (qi, q) in Quick::ALL.into_iter().enumerate().filter(|_| is_open("Views")) {
+        for (qi, q) in Quick::ALL
+            .into_iter()
+            .enumerate()
+            .filter(|_| is_open("Views"))
+        {
             let icon = match q {
                 Quick::All => IconName::LayoutGrid,
                 Quick::Frontier => IconName::Compass,
@@ -470,9 +613,13 @@ impl KuzgunApp {
                 Quick::Frontier => "Open, unclaimed and every blocker closed: what can start now",
                 Quick::Blocked => "Open with at least one open blocker",
                 Quick::Agent => "An agent can take it alone (ready-for-agent, research)",
-                Quick::Human => "Needs a person (ready-for-human, grilling, prototype, Needs a human)",
+                Quick::Human => {
+                    "Needs a person (ready-for-human, grilling, prototype, Needs a human)"
+                }
                 Quick::Recent => "Changed in the last 24 hours (git), newest first",
-                Quick::Attention => "Stale status, blockers not on the board, blocker cycles, stalled work, resolved without an answer",
+                Quick::Attention => {
+                    "Stale status, blockers not on the board, blocker cycles, stalled work, resolved without an answer"
+                }
             };
             col = col.child(
                 row(("quick", qi).into(), self.quick == q)
@@ -493,7 +640,11 @@ impl KuzgunApp {
 
         // Facets: short fields that repeat across tickets. One row per
         // value, with how many tickets carry it and how many are closed.
-        let project = self.view.project.as_ref().and_then(|n| self.board.projects.iter().position(|p| &p.name == n));
+        let project = self
+            .view
+            .project
+            .as_ref()
+            .and_then(|n| self.board.projects.iter().position(|p| &p.name == n));
         for (fi, f) in self.board.facets.iter().enumerate() {
             let current = self.filters.get(&f.key).cloned();
             let mut rows: Vec<(String, usize, usize)> = Vec::new();
@@ -504,7 +655,9 @@ impl KuzgunApp {
                     .iter()
                     .filter(|t| project.is_none_or(|p| t.project == p))
                     .filter(|t| t.field_values(&f.key).iter().any(|x| x == v))
-                    .fold((0, 0), |(n, c), t| (n + 1, c + t.category.is_closed() as usize));
+                    .fold((0, 0), |(n, c), t| {
+                        (n + 1, c + t.category.is_closed() as usize)
+                    });
                 if n > 0 {
                     rows.push((v.clone(), n, closed));
                 }
@@ -522,8 +675,16 @@ impl KuzgunApp {
                 let frac = closed as f32 / n as f32;
                 let key = f.key.clone();
                 let val = v.clone();
-                let ring_color = if closed == n { icons::status_color(Category::Done, light) } else { accent };
-                let mark = if model::is_milestone(&f.key) { icons::diamond(frac) } else { icons::ring(frac) };
+                let ring_color = if closed == n {
+                    icons::status_color(Category::Done, light)
+                } else {
+                    accent
+                };
+                let mark = if model::is_milestone(&f.key) {
+                    icons::diamond(frac)
+                } else {
+                    icons::ring(frac)
+                };
                 col = col.child(
                     row(("facet", fi * 1000 + i).into(), on)
                         .child(mark.size(px(14.)).text_color(ring_color))
@@ -535,7 +696,11 @@ impl KuzgunApp {
                                 .text_color(muted.opacity(0.7))
                                 .child(format!("{closed}/{n}")),
                         )
-                        .tooltip(tip(format!("{}: {v} · {n} tickets, {closed} closed ({:.0}%)", model::field_label(&f.key), frac * 100.)))
+                        .tooltip(tip(format!(
+                            "{}: {v} · {n} tickets, {closed} closed ({:.0}%)",
+                            model::field_label(&f.key),
+                            frac * 100.
+                        )))
                         .on_click(move |_, _, cx| {
                             let (key, val) = (key.clone(), val.clone());
                             with_app(cx, |this, cx| {
@@ -564,15 +729,21 @@ impl KuzgunApp {
         let t = cx.theme();
         let (muted, fg, border, accent) = (t.muted_foreground, t.foreground, t.border, t.accent);
         let prefs = crate::settings::get();
-        let mut chips: Vec<(String, Rc<dyn Fn(&mut KuzgunApp)>)> = Vec::new();
+        let mut chips: Vec<Chip> = Vec::new();
         if self.quick != Quick::All {
-            chips.push((format!("View: {}", self.quick.label()), Rc::new(|a: &mut KuzgunApp| a.quick = Quick::All)));
+            chips.push((
+                format!("View: {}", self.quick.label()),
+                Rc::new(|a: &mut KuzgunApp| a.quick = Quick::All),
+            ));
         }
         for (k, v) in &self.filters {
             let key = k.clone();
-            chips.push((format!("{}: {v}", model::field_label(k)), Rc::new(move |a: &mut KuzgunApp| {
-                a.filters.remove(&key);
-            })));
+            chips.push((
+                format!("{}: {v}", model::field_label(k)),
+                Rc::new(move |a: &mut KuzgunApp| {
+                    a.filters.remove(&key);
+                }),
+            ));
         }
         let filter_groups = Rc::new(self.filter_groups());
         let active: Rc<std::collections::BTreeMap<String, String>> = Rc::new(self.filters.clone());
@@ -597,18 +768,22 @@ impl KuzgunApp {
                         for (label, value, n) in &values {
                             let on = active.get(&key) == Some(value);
                             let (k, v) = (key.clone(), value.clone());
-                            m = m.item(PopupMenuItem::new(format!("{label}  {n}")).checked(on).on_click(move |_, _, cx| {
-                                let (k, v) = (k.clone(), v.clone());
-                                with_app(cx, |this, cx| {
-                                    if this.filters.get(&k) == Some(&v) {
-                                        this.filters.remove(&k);
-                                    } else {
-                                        this.filters.insert(k, v);
-                                    }
-                                    this.facet_view = None;
-                                    cx.notify();
-                                });
-                            }));
+                            m = m.item(
+                                PopupMenuItem::new(format!("{label}  {n}"))
+                                    .checked(on)
+                                    .on_click(move |_, _, cx| {
+                                        let (k, v) = (k.clone(), v.clone());
+                                        with_app(cx, |this, cx| {
+                                            if this.filters.get(&k) == Some(&v) {
+                                                this.filters.remove(&k);
+                                            } else {
+                                                this.filters.insert(k, v);
+                                            }
+                                            this.facet_view = None;
+                                            cx.notify();
+                                        });
+                                    }),
+                            );
                         }
                         m
                     });
@@ -638,59 +813,105 @@ impl KuzgunApp {
             )
             .dropdown_menu(move |menu: PopupMenu, _, _| {
                 let toggle = |label: &str, on: bool, f: fn(&mut KuzgunApp)| {
-                    PopupMenuItem::new(label.to_string()).checked(on).on_click(move |_, _, cx| {
-                        with_app(cx, |this, cx| {
-                            f(this);
-                            this.save_view();
-                            cx.notify();
+                    PopupMenuItem::new(label.to_string())
+                        .checked(on)
+                        .on_click(move |_, _, cx| {
+                            with_app(cx, |this, cx| {
+                                f(this);
+                                this.save_view();
+                                cx.notify();
+                            })
                         })
-                    })
                 };
                 let pref = |label: &str, on: bool, f: fn(&mut crate::settings::Prefs)| {
-                    PopupMenuItem::new(label.to_string()).checked(on).on_click(move |_, _, cx| crate::settings::update(cx, f))
+                    PopupMenuItem::new(label.to_string())
+                        .checked(on)
+                        .on_click(move |_, _, cx| crate::settings::update(cx, f))
                 };
                 let p = crate::settings::get();
                 let set_view = |label: &str, on: bool, f: Rc<dyn Fn(&mut KuzgunApp)>| {
-                    PopupMenuItem::new(label.to_string()).checked(on).on_click(move |_, _, cx| {
-                        let f = f.clone();
-                        with_app(cx, |this, cx| {
-                            f(this);
-                            this.save_view();
-                            cx.notify();
+                    PopupMenuItem::new(label.to_string())
+                        .checked(on)
+                        .on_click(move |_, _, cx| {
+                            let f = f.clone();
+                            with_app(cx, |this, cx| {
+                                f(this);
+                                this.save_view();
+                                cx.notify();
+                            })
                         })
-                    })
                 };
                 let mut menu = menu
                     .label("Layout")
-                    .item(set_view("Board", layout == Layout::Board, Rc::new(|a| a.view.layout = Layout::Board)))
-                    .item(set_view("List", layout == Layout::List, Rc::new(|a| a.view.layout = Layout::List)))
+                    .item(set_view(
+                        "Board",
+                        layout == Layout::Board,
+                        Rc::new(|a| a.view.layout = Layout::Board),
+                    ))
+                    .item(set_view(
+                        "List",
+                        layout == Layout::List,
+                        Rc::new(|a| a.view.layout = Layout::List),
+                    ))
                     .separator()
                     .label("Ordering");
                 for o in Ordering::ALL {
-                    menu = menu.item(set_view(o.label(), ordering == o, Rc::new(move |a| a.view.ordering = o)));
+                    menu = menu.item(set_view(
+                        o.label(),
+                        ordering == o,
+                        Rc::new(move |a| a.view.ordering = o),
+                    ));
                 }
                 menu = menu.separator().label("Completed issues");
                 for c in Completed::ALL {
-                    menu = menu.item(set_view(c.label(), completed == c, Rc::new(move |a| a.view.completed = c)));
+                    menu = menu.item(set_view(
+                        c.label(),
+                        completed == c,
+                        Rc::new(move |a| a.view.completed = c),
+                    ));
                 }
                 menu.separator()
                     .label("Board options")
-                    .item(toggle("Swimlanes by project", swim, |a| a.view.swimlanes = !a.view.swimlanes))
-                    .item(pref("Show empty columns", empty, |p| p.show_empty_columns = !p.show_empty_columns))
-                    .item(pref("Separate blocked tickets", split, |p| p.split_blocked = !p.split_blocked))
+                    .item(toggle("Swimlanes by project", swim, |a| {
+                        a.view.swimlanes = !a.view.swimlanes
+                    }))
+                    .item(pref("Show empty columns", empty, |p| {
+                        p.show_empty_columns = !p.show_empty_columns
+                    }))
+                    .item(pref("Separate blocked tickets", split, |p| {
+                        p.split_blocked = !p.split_blocked
+                    }))
                     .item(pref("Compact cards", compact, |p| {
-                        p.density = if p.compact() { "Comfortable".into() } else { "Compact".into() }
+                        p.density = if p.compact() {
+                            "Comfortable".into()
+                        } else {
+                            "Compact".into()
+                        }
                     }))
                     .separator()
                     .label("Card properties")
                     .item(pref("ID", p.card_id, |p| p.card_id = !p.card_id))
-                    .item(pref("Project", p.card_project, |p| p.card_project = !p.card_project))
-                    .item(pref("Fields", p.card_fields, |p| p.card_fields = !p.card_fields))
-                    .item(pref("AFK / HITL", p.card_mode, |p| p.card_mode = !p.card_mode))
-                    .item(pref("Sub-task progress", p.card_checklist, |p| p.card_checklist = !p.card_checklist))
-                    .item(pref("Relations", p.card_relations, |p| p.card_relations = !p.card_relations))
-                    .item(pref("Days in column", p.card_age, |p| p.card_age = !p.card_age))
-                    .item(pref("Updated", p.card_updated, |p| p.card_updated = !p.card_updated))
+                    .item(pref("Project", p.card_project, |p| {
+                        p.card_project = !p.card_project
+                    }))
+                    .item(pref("Fields", p.card_fields, |p| {
+                        p.card_fields = !p.card_fields
+                    }))
+                    .item(pref("AFK / HITL", p.card_mode, |p| {
+                        p.card_mode = !p.card_mode
+                    }))
+                    .item(pref("Sub-task progress", p.card_checklist, |p| {
+                        p.card_checklist = !p.card_checklist
+                    }))
+                    .item(pref("Relations", p.card_relations, |p| {
+                        p.card_relations = !p.card_relations
+                    }))
+                    .item(pref("Days in column", p.card_age, |p| {
+                        p.card_age = !p.card_age
+                    }))
+                    .item(pref("Updated", p.card_updated, |p| {
+                        p.card_updated = !p.card_updated
+                    }))
             });
         div()
             .flex()
@@ -702,13 +923,16 @@ impl KuzgunApp {
             .border_b_1()
             .border_color(border)
             .child(
-                div().w(px(if narrow { 220. } else { 300. })).flex_none().child(
-                    Input::new(&self.search)
-                        .small()
-                        .h(px(30.))
-                        .prefix(Icon::new(IconName::Search).size(px(13.)).text_color(muted))
-                        .cleanable(true),
-                ),
+                div()
+                    .w(px(if narrow { 220. } else { 300. }))
+                    .flex_none()
+                    .child(
+                        Input::new(&self.search)
+                            .small()
+                            .h(px(30.))
+                            .prefix(Icon::new(IconName::Search).size(px(13.)).text_color(muted))
+                            .cleanable(true),
+                    ),
             )
             .child(
                 div()
@@ -757,7 +981,7 @@ impl KuzgunApp {
 
     /// Filter menu entries: each key with its values, labels and counts in
     /// the current project.
-    fn filter_groups(&self) -> Vec<(String, Vec<(String, String, usize)>)> {
+    fn filter_groups(&self) -> Vec<FilterGroup> {
         let scope = self.project_ix();
         let ids: Vec<usize> = (0..self.board.tickets.len())
             .filter(|&i| scope.is_none_or(|p| self.board.tickets[i].project == p))
@@ -775,22 +999,43 @@ impl KuzgunApp {
         }
         groups.push((
             crate::app::FILTER_STATUS.to_string(),
-            statuses.into_iter().map(|(k, n)| (status_label(&k), k, n)).collect(),
+            statuses
+                .into_iter()
+                .map(|(k, n)| (status_label(&k), k, n))
+                .collect(),
         ));
 
         let rel = |label: &str, n: usize| (label.to_string(), label.to_string(), n);
         groups.push((
             crate::app::FILTER_RELATIONS.to_string(),
             vec![
-                rel("Blocked", count(&|i| self.idx.blocked.get(i).copied().unwrap_or(false))),
-                rel("Blocking others", count(&|i| self.idx.blocking_open.get(i).copied().unwrap_or(0) > 0)),
-                rel("No relations", count(&|i| self.board.tickets[i].blocked_by.is_empty() && self.board.tickets[i].blocks.is_empty())),
+                rel(
+                    "Blocked",
+                    count(&|i| self.idx.blocked.get(i).copied().unwrap_or(false)),
+                ),
+                rel(
+                    "Blocking others",
+                    count(&|i| self.idx.blocking_open.get(i).copied().unwrap_or(0) > 0),
+                ),
+                rel(
+                    "No relations",
+                    count(&|i| {
+                        self.board.tickets[i].blocked_by.is_empty()
+                            && self.board.tickets[i].blocks.is_empty()
+                    }),
+                ),
             ],
         ));
 
         let modes: Vec<(String, String, usize)> = [model::Mode::Afk, model::Mode::Hitl]
             .into_iter()
-            .map(|m| (m.label().to_string(), m.label().to_string(), count(&|i| self.idx.modes.get(i).copied().flatten() == Some(m))))
+            .map(|m| {
+                (
+                    m.label().to_string(),
+                    m.label().to_string(),
+                    count(&|i| self.idx.modes.get(i).copied().flatten() == Some(m)),
+                )
+            })
             .filter(|(_, _, n)| *n > 0)
             .collect();
         if !modes.is_empty() {
@@ -801,7 +1046,18 @@ impl KuzgunApp {
             let values: Vec<(String, String, usize)> = f
                 .values
                 .iter()
-                .map(|v| (v.clone(), v.clone(), count(&|i| self.board.tickets[i].field_values(&f.key).iter().any(|x| x == v))))
+                .map(|v| {
+                    (
+                        v.clone(),
+                        v.clone(),
+                        count(&|i| {
+                            self.board.tickets[i]
+                                .field_values(&f.key)
+                                .iter()
+                                .any(|x| x == v)
+                        }),
+                    )
+                })
                 .filter(|(_, _, n)| *n > 0)
                 .collect();
             if !values.is_empty() {
@@ -835,7 +1091,12 @@ impl KuzgunApp {
                 .border_color(border)
                 .cursor_pointer()
                 .hover(|d| d.bg(muted.opacity(0.05)))
-                .child(Icon::new(IconName::Flag).size(px(14.)).text_color(muted).mt(px(2.)))
+                .child(
+                    Icon::new(IconName::Flag)
+                        .size(px(14.))
+                        .text_color(muted)
+                        .mt(px(2.)),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -844,15 +1105,20 @@ impl KuzgunApp {
                         .flex_col()
                         .gap_0p5()
                         .child(div().text_xs().text_color(muted).child("Destination"))
-                        .child(div().text_sm().text_color(fg).line_clamp(2).child(map.destination.clone())),
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(fg)
+                                .line_clamp(2)
+                                .child(map.destination.clone()),
+                        ),
                 )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(muted)
-                        .child(format!("{} decisions · {} in fog · {} out of scope", map.decisions, map.fog.len(), map.out_of_scope.len())),
-                )
+                .child(div().flex_none().text_xs().text_color(muted).child(format!(
+                    "{} decisions · {} in fog · {} out of scope",
+                    map.decisions,
+                    map.fog.len(),
+                    map.out_of_scope.len()
+                )))
                 .on_click(cx.listener(move |this, _, w, cx| this.open_doc(path.clone(), w, cx)))
                 .into_any_element(),
         )
@@ -870,7 +1136,11 @@ impl KuzgunApp {
         Some((m.fog.clone(), m.out_of_scope.clone()))
     }
 
-    fn render_columns(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_columns(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let groups = self.grouped(cx);
         if self.board.tickets.is_empty() {
             return self.render_empty(cx).into_any_element();
@@ -892,7 +1162,13 @@ impl KuzgunApp {
         let mut cols: Vec<AnyElement> = Vec::new();
         if let Some((fog, out)) = fog {
             if !fog.is_empty() {
-                cols.push(self.render_note_column("fog", "Not yet specified", IconName::CloudFog, fog, cx));
+                cols.push(self.render_note_column(
+                    "fog",
+                    "Not yet specified",
+                    IconName::CloudFog,
+                    fog,
+                    cx,
+                ));
                 total += width + COL_GAP;
             }
             out_of_scope = out;
@@ -909,7 +1185,13 @@ impl KuzgunApp {
         }
         // Ruled-out items close the board: they are settled, not work.
         if !out_of_scope.is_empty() {
-            cols.push(self.render_note_column("out", "Out of scope", IconName::Ban, out_of_scope, cx));
+            cols.push(self.render_note_column(
+                "out",
+                "Out of scope",
+                IconName::Ban,
+                out_of_scope,
+                cx,
+            ));
             total += width + COL_GAP;
         }
         if !hidden.is_empty() {
@@ -962,7 +1244,10 @@ impl KuzgunApp {
                 .border_color(border)
                 .text_sm()
                 .text_color(muted)
-                .child(format!("{hidden} ticket{} hidden by filters", if hidden == 1 { "" } else { "s" }))
+                .child(format!(
+                    "{hidden} ticket{} hidden by filters",
+                    if hidden == 1 { "" } else { "s" }
+                ))
                 .child("·")
                 .child(
                     div()
@@ -977,7 +1262,11 @@ impl KuzgunApp {
         )
     }
 
-    fn render_hidden_columns(&self, hidden: Vec<(Column, usize)>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_hidden_columns(
+        &self,
+        hidden: Vec<(Column, usize)>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.theme();
         let (muted, fg) = (t.muted_foreground, t.foreground);
         let light = crate::settings::is_light(cx);
@@ -1012,7 +1301,15 @@ impl KuzgunApp {
                     .cursor_pointer()
                     .hover(|d| d.bg(muted.opacity(0.1)))
                     .child(column_icon(&col, light).size(px(14.)))
-                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(fg).child(status_label(&col.status)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .text_color(fg)
+                            .child(status_label(&col.status)),
+                    )
                     .child(div().text_xs().text_color(muted).child(n.to_string()))
                     .tooltip(tip("Show this column".to_string()))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1076,7 +1373,14 @@ impl KuzgunApp {
             })
     }
 
-    fn column_header(&self, ci: usize, col: &Column, n: usize, collapsible: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn column_header(
+        &self,
+        ci: usize,
+        col: &Column,
+        n: usize,
+        collapsible: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let group = SharedString::from(format!("colhead-{ci}"));
         let t = cx.theme();
         let (muted, fg) = (t.muted_foreground, t.foreground);
@@ -1086,7 +1390,13 @@ impl KuzgunApp {
             .board
             .roles
             .get(&col.status)
-            .map(|(role, m)| if role == &col.status { m.clone() } else { format!("{role}: {m}") })
+            .map(|(role, m)| {
+                if role == &col.status {
+                    m.clone()
+                } else {
+                    format!("{role}: {m}")
+                }
+            })
             .or_else(|| model::role_meaning(&col.status).map(str::to_string));
         let help = format!(
             "{} · {}{}",
@@ -1104,33 +1414,55 @@ impl KuzgunApp {
             .h(px(34.))
             .px_2()
             .tooltip(tip(help))
+            .child(column_icon(col, light).size(px(14.)))
             .child(
-                column_icon(col, light).size(px(14.)),
+                div()
+                    .min_w_0()
+                    .text_sm()
+                    .text_color(fg)
+                    .truncate()
+                    .child(status_label(&col.status)),
             )
-            .child(div().min_w_0().text_sm().text_color(fg).truncate().child(status_label(&col.status)))
-            .child(div().flex_none().text_sm().text_color(muted.opacity(0.7)).child(n.to_string()))
+            .child(
+                div()
+                    .flex_none()
+                    .text_sm()
+                    .text_color(muted.opacity(0.7))
+                    .child(n.to_string()),
+            )
             .child(div().flex_1())
             .when(collapsible, |d| {
                 d.child(
-                    div().invisible().group_hover(group.clone(), |d| d.visible()).child(
-                    Button::new(("col-hide", ci))
-                        .ghost()
-                        .xsmall()
-                        .icon(Icon::new(IconName::ChevronsLeft).text_color(muted))
-                        .tooltip("Collapse column")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.view.collapsed.contains(&status) {
-                                this.view.collapsed.push(status.clone());
-                            }
-                            this.save_view();
-                            cx.notify();
-                        }))),
+                    div()
+                        .invisible()
+                        .group_hover(group.clone(), |d| d.visible())
+                        .child(
+                            Button::new(("col-hide", ci))
+                                .ghost()
+                                .xsmall()
+                                .icon(Icon::new(IconName::ChevronsLeft).text_color(muted))
+                                .tooltip("Collapse column")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if !this.view.collapsed.contains(&status) {
+                                        this.view.collapsed.push(status.clone());
+                                    }
+                                    this.save_view();
+                                    cx.notify();
+                                })),
+                        ),
                 )
             })
     }
 
     /// A read-only column of map bullets (fog, out of scope).
-    fn render_note_column(&self, id: &'static str, title: &str, icon: IconName, items: Vec<String>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_note_column(
+        &self,
+        id: &'static str,
+        title: &str,
+        icon: IconName,
+        items: Vec<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.theme();
         let (muted, fg, border) = (t.muted_foreground, t.foreground, t.border);
         let width = crate::settings::get().column_width;
@@ -1157,7 +1489,12 @@ impl KuzgunApp {
                     .px_2()
                     .child(Icon::new(icon).size(px(14.)).text_color(muted))
                     .child(div().text_sm().text_color(fg).child(title.to_string()))
-                    .child(div().text_sm().text_color(muted.opacity(0.7)).child(items.len().to_string())),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted.opacity(0.7))
+                            .child(items.len().to_string()),
+                    ),
             )
             .child(
                 div()
@@ -1183,13 +1520,22 @@ impl KuzgunApp {
                             .text_sm()
                             .text_color(muted)
                             .when(id == "out", |d| d.max_h(px(44.)).overflow_hidden())
-                            .child(gpui_kit::component::text::TextView::markdown((id, 1000 + i), text).style(style.clone()))
+                            .child(
+                                gpui_kit::component::text::TextView::markdown((id, 1000 + i), text)
+                                    .style(style.clone()),
+                            )
                     })),
             )
             .into_any_element()
     }
 
-    fn render_column(&self, ci: usize, col: Column, items: Vec<usize>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_column(
+        &self,
+        ci: usize,
+        col: Column,
+        items: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.theme();
         let muted = t.muted_foreground;
         let light = crate::settings::is_light(cx);
@@ -1224,9 +1570,12 @@ impl KuzgunApp {
             let items = Rc::new(items);
             let state = {
                 let mut lists = self.lists.borrow_mut();
-                let e = lists
-                    .entry(col.status.clone())
-                    .or_insert_with(|| (ListState::new(0, ListAlignment::Top, px(600.)), Rc::new(Vec::new())));
+                let e = lists.entry(col.status.clone()).or_insert_with(|| {
+                    (
+                        ListState::new(0, ListAlignment::Top, px(600.)),
+                        Rc::new(Vec::new()),
+                    )
+                });
                 if *e.1 != *items {
                     e.0.reset(items.len());
                     e.1 = items.clone();
@@ -1239,7 +1588,11 @@ impl KuzgunApp {
                     return div().into_any_element();
                 };
                 view.update(cx, |this, cx| {
-                    div().px(px(6.)).pb(px(6.)).child(this.render_card(ix, false, window, cx)).into_any_element()
+                    div()
+                        .px(px(6.))
+                        .pb(px(6.))
+                        .child(this.render_card(ix, false, window, cx))
+                        .into_any_element()
                 })
                 .unwrap_or_else(|_| div().into_any_element())
             })
@@ -1247,10 +1600,18 @@ impl KuzgunApp {
             .min_h_0()
             .into_any_element()
         };
-        base.w(px(width)).child(header).child(body).into_any_element()
+        base.w(px(width))
+            .child(header)
+            .child(body)
+            .into_any_element()
     }
 
-    fn render_lanes(&mut self, groups: Vec<(Column, Vec<usize>)>, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_lanes(
+        &mut self,
+        groups: Vec<(Column, Vec<usize>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let t = cx.theme();
         let (muted, fg, border) = (t.muted_foreground, t.foreground, t.border);
         let light = crate::settings::is_light(cx);
@@ -1267,13 +1628,26 @@ impl KuzgunApp {
             .pt(px(BOARD_PAD))
             .children(cols.iter().enumerate().map(|(ci, c)| {
                 let n = groups[ci].1.len();
-                div().w(px(width)).flex_none().child(self.column_header(ci, c, n, false, cx))
+                div()
+                    .w(px(width))
+                    .flex_none()
+                    .child(self.column_header(ci, c, n, false, cx))
             }));
-        let mut lanes = div().flex().flex_col().gap_1().px(px(BOARD_PAD)).pb(px(BOARD_PAD));
+        let mut lanes = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px(px(BOARD_PAD))
+            .pb(px(BOARD_PAD));
         for (pi, p) in self.board.projects.iter().enumerate() {
             let per: Vec<Vec<usize>> = groups
                 .iter()
-                .map(|(_, v)| v.iter().copied().filter(|&i| self.board.tickets[i].project == pi).collect())
+                .map(|(_, v)| {
+                    v.iter()
+                        .copied()
+                        .filter(|&i| self.board.tickets[i].project == pi)
+                        .collect()
+                })
                 .collect();
             let lane_total: usize = per.iter().map(Vec::len).sum();
             if lane_total == 0 {
@@ -1292,14 +1666,34 @@ impl KuzgunApp {
                     .border_b_1()
                     .border_color(border)
                     .child(
-                        Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
-                            .size(px(13.))
-                            .text_color(muted),
+                        Icon::new(if collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        })
+                        .size(px(13.))
+                        .text_color(muted),
                     )
-                    .child(div().size(px(8.)).rounded_full().bg(icons::tag_color(&p.name)))
+                    .child(
+                        div()
+                            .size(px(8.))
+                            .rounded_full()
+                            .bg(icons::tag_color(&p.name)),
+                    )
                     .child(div().text_sm().text_color(fg).child(p.title.clone()))
-                    .child(div().text_xs().font_family(crate::settings::mono_font()).text_color(muted).child(p.key.clone()))
-                    .child(div().text_xs().text_color(muted.opacity(0.7)).child(lane_total.to_string()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_family(crate::settings::mono_font())
+                            .text_color(muted)
+                            .child(p.key.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted.opacity(0.7))
+                            .child(lane_total.to_string()),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(i) = this.collapsed_lanes.iter().position(|&x| x == pi) {
                             this.collapsed_lanes.remove(i);
@@ -1312,21 +1706,29 @@ impl KuzgunApp {
             if collapsed {
                 continue;
             }
-            let row = div().flex().flex_row().gap(px(COL_GAP)).children((0..ncols).map(|ci| {
-                div()
-                    .id(("lane-col", pi * 1000 + ci))
-                    .w(px(width))
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .p(px(6.))
-                    .min_h(px(48.))
-                    .rounded(px(8.))
-                    .bg(muted.opacity(if light { 0.06 } else { 0.045 }))
-                    .children(per[ci].iter().map(|&ix| self.render_card(ix, true, window, cx)))
-                    .into_any_element()
-            }));
+            let row = div()
+                .flex()
+                .flex_row()
+                .gap(px(COL_GAP))
+                .children((0..ncols).map(|ci| {
+                    div()
+                        .id(("lane-col", pi * 1000 + ci))
+                        .w(px(width))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.))
+                        .p(px(6.))
+                        .min_h(px(48.))
+                        .rounded(px(8.))
+                        .bg(muted.opacity(if light { 0.06 } else { 0.045 }))
+                        .children(
+                            per[ci]
+                                .iter()
+                                .map(|&ix| self.render_card(ix, true, window, cx)),
+                        )
+                        .into_any_element()
+                }));
             lanes = lanes.child(row);
         }
         div()
@@ -1362,7 +1764,9 @@ impl KuzgunApp {
     /// list, like search results, with what the view means on top.
     /// The sidebar facet shown as a flat list, while its filter is still on.
     fn active_facet(&self) -> Option<(String, String)> {
-        self.facet_view.clone().filter(|(k, v)| self.quick == Quick::All && self.filters.get(k) == Some(v))
+        self.facet_view
+            .clone()
+            .filter(|(k, v)| self.quick == Quick::All && self.filters.get(k) == Some(v))
     }
 
     fn render_view_results(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -1378,27 +1782,41 @@ impl KuzgunApp {
             Quick::Frontier => "Open, unclaimed and every blocker closed: these can start now.",
             Quick::Blocked => "Open with at least one open blocker. Closest to ready first.",
             Quick::Agent => "An agent can take these alone (ready-for-agent, research).",
-            Quick::Human => "These need a person (ready-for-human, grilling, prototype, Needs a human).",
+            Quick::Human => {
+                "These need a person (ready-for-human, grilling, prototype, Needs a human)."
+            }
             Quick::Recent => "Changed in the last 24 hours, newest first.",
-            Quick::Attention => "Something is off: a stale status, a blocker not on the board, a cycle, stalled work.",
+            Quick::Attention => {
+                "Something is off: a stale status, a blocker not on the board, a cycle, stalled work."
+            }
         };
         let facet = self.active_facet();
-        let closed = items.iter().filter(|&&i| self.board.tickets[i].category.is_closed()).count();
+        let closed = items
+            .iter()
+            .filter(|&&i| self.board.tickets[i].category.is_closed())
+            .count();
         let (title, help, list_key) = match &facet {
             Some((k, v)) => (
                 format!("{}: {v}", model::field_label(k)),
                 format!("{closed} of {} closed.", items.len()),
                 format!("__facet_{k}_{v}__"),
             ),
-            None => (q.label().to_string(), help.to_string(), format!("__view_{}__", q.label())),
+            None => (
+                q.label().to_string(),
+                help.to_string(),
+                format!("__view_{}__", q.label()),
+            ),
         };
         let items = Rc::new(items);
         let n = items.len();
         let state = {
             let mut lists = self.lists.borrow_mut();
-            let e = lists
-                .entry(list_key)
-                .or_insert_with(|| (ListState::new(0, ListAlignment::Top, px(800.)), Rc::new(Vec::new())));
+            let e = lists.entry(list_key).or_insert_with(|| {
+                (
+                    ListState::new(0, ListAlignment::Top, px(800.)),
+                    Rc::new(Vec::new()),
+                )
+            });
             if *e.1 != *items {
                 e.0.reset(items.len());
                 e.1 = items.clone();
@@ -1433,7 +1851,13 @@ impl KuzgunApp {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(fg).child(title))
+                                    .child(
+                                        div()
+                                            .text_base()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(fg)
+                                            .child(title),
+                                    )
                                     .child(div().text_sm().text_color(muted).child(n.to_string())),
                             )
                             .child(div().text_sm().text_color(muted).child(help)),
@@ -1453,7 +1877,15 @@ impl KuzgunApp {
                             })),
                     ),
             )
-            .when(n == 0, |d| d.child(div().p_6().text_sm().text_color(muted).child("Nothing here right now.")))
+            .when(n == 0, |d| {
+                d.child(
+                    div()
+                        .p_6()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("Nothing here right now."),
+                )
+            })
             .child(
                 list(state, move |i, window, cx| {
                     let Some(&ix) = items.get(i) else {
@@ -1508,7 +1940,11 @@ impl KuzgunApp {
 
     /// Linear's list layout: one virtualized list, a header row per status
     /// (folds with the column's collapse state) and one row per ticket.
-    fn render_list(&self, groups: Vec<(Column, Vec<usize>)>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_list(
+        &self,
+        groups: Vec<(Column, Vec<usize>)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         // Rows: a header is `HEADER + group`, a ticket its index.
         const HEADER: usize = usize::MAX / 2;
         let mut rows: Vec<usize> = Vec::new();
@@ -1525,9 +1961,12 @@ impl KuzgunApp {
         let groups = Rc::new(groups);
         let state = {
             let mut lists = self.lists.borrow_mut();
-            let e = lists
-                .entry("__list__".into())
-                .or_insert_with(|| (ListState::new(0, ListAlignment::Top, px(800.)), Rc::new(Vec::new())));
+            let e = lists.entry("__list__".into()).or_insert_with(|| {
+                (
+                    ListState::new(0, ListAlignment::Top, px(800.)),
+                    Rc::new(Vec::new()),
+                )
+            });
             if *e.1 != *rows {
                 e.0.reset(rows.len());
                 e.1 = rows.clone();
@@ -1575,12 +2014,22 @@ impl KuzgunApp {
             .border_color(border)
             .cursor_pointer()
             .child(
-                Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight })
-                    .size(px(12.))
-                    .text_color(muted),
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .text_color(muted),
             )
             .child(column_icon(col, light).size(px(14.)))
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(fg).child(status_label(&col.status)))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(fg)
+                    .child(status_label(&col.status)),
+            )
             .child(div().text_sm().text_color(muted).child(n.to_string()))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(i) = this.view.collapsed.iter().position(|s| s == &status) {
@@ -1597,7 +2046,12 @@ impl KuzgunApp {
     fn list_row(&self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = &self.board.tickets[ix];
         let theme = cx.theme();
-        let (muted, fg, border, accent) = (theme.muted_foreground, theme.foreground, theme.border, theme.accent);
+        let (muted, fg, border, accent) = (
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+            theme.accent,
+        );
         let light = crate::settings::is_light(cx);
         let selected = self.selected.as_ref() == Some(&t.path);
         let blocked = self.idx.open_blockers.get(ix).map(Vec::len).unwrap_or(0);
@@ -1635,24 +2089,41 @@ impl KuzgunApp {
                     .text_color(muted)
                     .child(t.key.clone()),
             )
-            .child(icons::status_icon(t.category).size(px(15.)).text_color(icons::status_color(t.category, light)))
-            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(fg).child(t.title.clone()))
-            .when(t.agent.as_ref().is_some_and(|a| a.state == crate::agents::RunState::Running), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap_1()
-                        .px_1p5()
-                        .rounded(px(5.))
-                        .bg(theme.green.opacity(0.14))
-                        .text_xs()
-                        .text_color(theme.green)
-                        .child(Icon::new(IconName::Bot).size(px(12.)))
-                        .child("Agent working"),
-                )
-            })
+            .child(
+                icons::status_icon(t.category)
+                    .size(px(15.))
+                    .text_color(icons::status_color(t.category, light)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(fg)
+                    .child(t.title.clone()),
+            )
+            .when(
+                t.agent
+                    .as_ref()
+                    .is_some_and(|a| a.state == crate::agents::RunState::Running),
+                |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_1()
+                            .px_1p5()
+                            .rounded(px(5.))
+                            .bg(theme.green.opacity(0.14))
+                            .text_xs()
+                            .text_color(theme.green)
+                            .child(Icon::new(IconName::Bot).size(px(12.)))
+                            .child("Agent working"),
+                    )
+                },
+            )
             .when(blocked > 0, |d| {
                 d.child(
                     div()
@@ -1694,7 +2165,11 @@ impl KuzgunApp {
                         .w(px(52.))
                         .text_xs()
                         .text_color(muted)
-                        .child(icons::ring(done as f32 / total as f32).size(px(12.)).text_color(muted))
+                        .child(
+                            icons::ring(done as f32 / total as f32)
+                                .size(px(12.))
+                                .text_color(muted),
+                        )
                         .child(format!("{done}/{total}")),
                 )
             })
@@ -1708,7 +2183,12 @@ impl KuzgunApp {
                         .w(px(150.))
                         .text_xs()
                         .text_color(muted)
-                        .child(div().size(px(7.)).rounded_full().bg(icons::tag_color(&project.name)))
+                        .child(
+                            div()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(icons::tag_color(&project.name)),
+                        )
                         .child(div().truncate().child(project.title.clone())),
                 )
             })
@@ -1718,7 +2198,9 @@ impl KuzgunApp {
                     .flex_none()
                     .flex()
                     .justify_end()
-                    .when(!people.is_empty(), |d| d.child(avatar_group(&people, 20., theme.background, 3, muted))),
+                    .when(!people.is_empty(), |d| {
+                        d.child(avatar_group(&people, 20., theme.background, 3, muted))
+                    }),
             )
             .child(
                 div()
@@ -1737,15 +2219,30 @@ impl KuzgunApp {
 
     // ---------- cards ----------
 
-    fn render_card(&self, ix: usize, in_lane: bool, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_card(
+        &self,
+        ix: usize,
+        in_lane: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = &self.board.tickets[ix];
         let theme = cx.theme();
-        let (muted, fg, border, accent, red, yellow) =
-            (theme.muted_foreground, theme.foreground, theme.border, theme.accent, theme.red, theme.yellow);
+        let (muted, fg, border, accent, red, yellow) = (
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+            theme.accent,
+            theme.red,
+            theme.yellow,
+        );
         let light = crate::settings::is_light(cx);
         let prefs = crate::settings::get();
         let selected = self.selected.as_ref() == Some(&t.path);
-        let open = self.detail.as_ref().is_some_and(|d| !d.is_doc && d.path == t.path);
+        let open = self
+            .detail
+            .as_ref()
+            .is_some_and(|d| !d.is_doc && d.path == t.path);
         let flash = self
             .flash
             .get(&t.path)
@@ -1755,7 +2252,11 @@ impl KuzgunApp {
         let frontier = self.idx.frontier.get(ix).copied().unwrap_or(false);
         let project = &self.board.projects[t.project];
         let (done, total) = t.checklist_counts();
-        let card_bg: Hsla = if light { theme.background } else { rgb(0x0E0E10).into() };
+        let card_bg: Hsla = if light {
+            theme.background
+        } else {
+            rgb(0x0E0E10).into()
+        };
         let chip = |text: String, color: Option<Hsla>| {
             div()
                 .flex()
@@ -1769,13 +2270,18 @@ impl KuzgunApp {
                 .border_color(border)
                 .text_xs()
                 .text_color(muted)
-                .when_some(color, |d, c| d.child(div().size(px(6.)).rounded_full().bg(c)))
+                .when_some(color, |d, c| {
+                    d.child(div().size(px(6.)).rounded_full().bg(c))
+                })
                 .child(text)
         };
 
         let mut chips: Vec<AnyElement> = Vec::new();
         if prefs.card_project && self.view.project.is_none() && !in_lane {
-            chips.push(chip(project.title.clone(), Some(icons::tag_color(&project.name))).into_any_element());
+            chips.push(
+                chip(project.title.clone(), Some(icons::tag_color(&project.name)))
+                    .into_any_element(),
+            );
         }
         if prefs.card_mode
             && let Some(m) = self.idx.modes.get(ix).copied().flatten()
@@ -1825,13 +2331,20 @@ impl KuzgunApp {
                         continue;
                     }
                     let is_kind = f.key.eq_ignore_ascii_case("type");
-                    chips.push(chip(v.clone(), (!is_kind).then(|| icons::tag_color(&v))).into_any_element());
+                    chips.push(
+                        chip(v.clone(), (!is_kind).then(|| icons::tag_color(&v)))
+                            .into_any_element(),
+                    );
                 }
             }
         }
         if prefs.card_checklist && total > 0 {
             let frac = done as f32 / total as f32;
-            let c = if done == total { icons::status_color(Category::Done, light) } else { muted };
+            let c = if done == total {
+                icons::status_color(Category::Done, light)
+            } else {
+                muted
+            };
             chips.push(
                 div()
                     .flex()
@@ -1882,7 +2395,10 @@ impl KuzgunApp {
                         .text_color(muted)
                         .child(Icon::new(IconName::Clock).size(px(11.)))
                         .child(format!("{days}d"))
-                        .tooltip(tip(format!("{} for {days} days", status_label(&t.status_key))))
+                        .tooltip(tip(format!(
+                            "{} for {days} days",
+                            status_label(&t.status_key)
+                        )))
                         .into_any_element(),
                 );
             }
@@ -1890,7 +2406,14 @@ impl KuzgunApp {
         if prefs.card_updated
             && let Some(m) = t.modified
         {
-            chips.push(div().flex_none().text_xs().text_color(muted.opacity(0.7)).child(ago_since(Some(m))).into_any_element());
+            chips.push(
+                div()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(muted.opacity(0.7))
+                    .child(ago_since(Some(m)))
+                    .into_any_element(),
+            );
         }
 
         let mut marks: Vec<AnyElement> = Vec::new();
@@ -1905,7 +2428,10 @@ impl KuzgunApp {
                     .text_xs()
                     .text_color(muted)
                     .child(Icon::new(IconName::Sparkles).size(px(11.)))
-                    .tooltip(tip(format!("{why}. The file still says {}.", status_label(&t.status))))
+                    .tooltip(tip(format!(
+                        "{why}. The file still says {}.",
+                        status_label(&t.status)
+                    )))
                     .into_any_element(),
             );
         }
@@ -1942,7 +2468,11 @@ impl KuzgunApp {
                 marks.push(
                     div()
                         .id(("frontier", ix))
-                        .child(Icon::new(IconName::Compass).size(px(12.)).text_color(theme.green))
+                        .child(
+                            Icon::new(IconName::Compass)
+                                .size(px(12.))
+                                .text_color(theme.green),
+                        )
                         .tooltip(tip("On the frontier: open and every blocker closed".into()))
                         .into_any_element(),
                 );
@@ -1950,12 +2480,20 @@ impl KuzgunApp {
             if blocked {
                 let open_blockers = self.idx.open_blockers.get(ix).cloned().unwrap_or_default();
                 let projects = self.blocking_projects(ix);
-                let names = open_blockers
-                    .iter()
-                    .map(|&b| format!("{} {}", self.board.tickets[b].key, self.board.tickets[b].title))
-                    .chain(projects.iter().map(|&p| format!("The whole {} project", self.board.projects[p].title)))
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let names =
+                    open_blockers
+                        .iter()
+                        .map(|&b| {
+                            format!(
+                                "{} {}",
+                                self.board.tickets[b].key, self.board.tickets[b].title
+                            )
+                        })
+                        .chain(projects.iter().map(|&p| {
+                            format!("The whole {} project", self.board.projects[p].title)
+                        }))
+                        .collect::<Vec<_>>()
+                        .join("\n");
                 let count = open_blockers.len() + projects.len();
                 marks.push(
                     div()
@@ -2014,10 +2552,12 @@ impl KuzgunApp {
                     PopupMenu::build(window, cx, move |mut m, _, _| {
                         for e in crate::editors::installed() {
                             let (name, p) = (e.name.clone(), p.clone());
-                            m = m.item(PopupMenuItem::new(e.name.clone()).on_click(move |_, _, cx| {
-                                let (name, p) = (name.clone(), p.clone());
-                                with_app(cx, |a, cx| a.open_with(name, &p, cx));
-                            }));
+                            m = m.item(PopupMenuItem::new(e.name.clone()).on_click(
+                                move |_, _, cx| {
+                                    let (name, p) = (name.clone(), p.clone());
+                                    with_app(cx, |a, cx| a.open_with(name, &p, cx));
+                                },
+                            ));
                         }
                         m
                     })
@@ -2031,29 +2571,53 @@ impl KuzgunApp {
                     }
                 };
                 let menu = menu
-                    .item(PopupMenuItem::new("Open").on_click(go(|a, p, w, cx| a.open_detail(p, true, w, cx))))
-                    .item(PopupMenuItem::new("Peek").on_click(go(|a, p, w, cx| a.open_detail(p, false, w, cx))))
+                    .item(
+                        PopupMenuItem::new("Open")
+                            .on_click(go(|a, p, w, cx| a.open_detail(p, true, w, cx))),
+                    )
+                    .item(
+                        PopupMenuItem::new("Peek")
+                            .on_click(go(|a, p, w, cx| a.open_detail(p, false, w, cx))),
+                    )
                     .separator();
                 let menu = match &next_skill {
                     Some(skill) => menu
-                        .item(PopupMenuItem::new(format!("Start agent (/{skill})")).on_click(go(|a, p, _, cx| a.start_agent(&p, cx))))
+                        .item(
+                            PopupMenuItem::new(format!("Start agent (/{skill})"))
+                                .on_click(go(|a, p, _, cx| a.start_agent(&p, cx))),
+                        )
                         .item(
                             PopupMenuItem::new(format!("Copy /{skill} command (suggested)"))
                                 .on_click(go(|a, p, _, cx| a.copy_next(&p, cx))),
                         ),
                     None => menu,
                 }
-                    .item(PopupMenuItem::new("Copy /implement Command").on_click(go(|a, p, _, cx| a.copy_command("implement", &p, cx))))
-                    .item(PopupMenuItem::new("Copy /triage Command").on_click(go(|a, p, _, cx| a.copy_command("triage", &p, cx))));
+                .item(
+                    PopupMenuItem::new("Copy /implement Command")
+                        .on_click(go(|a, p, _, cx| a.copy_command("implement", &p, cx))),
+                )
+                .item(
+                    PopupMenuItem::new("Copy /triage Command")
+                        .on_click(go(|a, p, _, cx| a.copy_command("triage", &p, cx))),
+                );
                 let menu = if is_map {
-                    menu.item(PopupMenuItem::new("Copy /wayfinder Command").on_click(go(|a, p, _, cx| a.copy_command("wayfinder", &p, cx))))
+                    menu.item(
+                        PopupMenuItem::new("Copy /wayfinder Command")
+                            .on_click(go(|a, p, _, cx| a.copy_command("wayfinder", &p, cx))),
+                    )
                 } else {
                     menu
                 };
                 menu.separator()
-                    .item(PopupMenuItem::new("Open in Editor").on_click(go(|a, p, _, cx| a.open_in_editor(&p, cx))))
+                    .item(
+                        PopupMenuItem::new("Open in Editor")
+                            .on_click(go(|a, p, _, cx| a.open_in_editor(&p, cx))),
+                    )
                     .item(PopupMenuItem::submenu("Open in", editors_menu))
-                    .item(PopupMenuItem::new("Reveal in Finder").on_click(go(|_, p, _, cx| cx.reveal_path(&p))))
+                    .item(
+                        PopupMenuItem::new("Reveal in Finder")
+                            .on_click(go(|_, p, _, cx| cx.reveal_path(&p))),
+                    )
                     .separator()
                     .item(PopupMenuItem::new("Copy ID").on_click(go(|a, p, _, cx| {
                         a.selected = Some(p);
@@ -2063,7 +2627,9 @@ impl KuzgunApp {
                         a.selected = Some(p);
                         a.copy_current("title", cx);
                     })))
-                    .item(PopupMenuItem::new("Copy Path").on_click(go(|a, p, _, cx| a.copy("path", p.display().to_string(), cx))))
+                    .item(PopupMenuItem::new("Copy Path").on_click(go(|a, p, _, cx| {
+                        a.copy("path", p.display().to_string(), cx)
+                    })))
             })
             .child(
                 div()
@@ -2113,7 +2679,14 @@ impl KuzgunApp {
                     ),
             )
             .when(!chips.is_empty() && !compact, |d| {
-                d.child(div().flex().flex_wrap().items_center().gap_1().children(chips))
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_1()
+                        .children(chips),
+                )
             })
             .into_any_element()
     }

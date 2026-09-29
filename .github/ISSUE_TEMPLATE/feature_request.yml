@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest something Kuzgun should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or problem, in your own words. Why doesn't Kuzgun handle it well today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you picture it working. Links to how other tools do it are welcome.
