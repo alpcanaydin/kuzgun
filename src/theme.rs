@@ -220,7 +220,7 @@ pub fn apply(cx: &mut App) {
             colors.drop_target = c.opacity(0.2);
         }
         // Primary buttons: the kit's hover and active tokens carry their own
-        // text color; derive them from the accent so the label stays white.
+        // text color; derive them from the brand color so the label stays white.
         {
             use gpui_kit::component::theme::ThemeToken;
             let c = theme.colors.primary;
@@ -242,13 +242,20 @@ pub fn apply(cx: &mut App) {
             theme.tokens.button_primary_hover = ThemeToken::new(white, hover.into());
             theme.tokens.button_primary_active = ThemeToken::new(white, active.into());
             theme.colors.button_primary_foreground = white;
-            // Menus and selected items fill with the accent: white text.
-            theme.colors.accent_foreground = white;
-            theme.tokens.accent = ThemeToken::new(white, theme.colors.accent.into());
         }
-        // Selected grid row: the accent, unless it reads like a pending
+        // The kit's `accent` is the soft fill of hovered and selected rows,
+        // menu items and ghost buttons, not the brand color. Kuzgun draws
+        // its brand color from `primary`; `accent` gets a soft brand tint
+        // that keeps the normal text readable.
+        {
+            let brand = theme.colors.primary;
+            let bg = theme.colors.background;
+            theme.colors.accent = bg.blend(brand.opacity(if light { 0.12 } else { 0.24 }));
+            theme.colors.accent_foreground = theme.colors.foreground;
+        }
+        // Selected grid row: the brand color, unless it reads like a pending
         // change color (edited / deleted / added) — then plain blue.
-        let accent = theme.colors.accent;
+        let accent = theme.colors.primary;
         let sel = if crate::themes::clashes_with_changes(accent) {
             Hsla::from(rgb(if light { 0x2F6FE0 } else { 0x4A90F0 }))
         } else {

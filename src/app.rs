@@ -199,6 +199,8 @@ pub struct KuzgunApp {
     /// Agent runs of any age, read once per board. Only the session page
     /// uses them; statuses follow the recent runs alone.
     pub history_runs: Vec<crate::agents::AgentRun>,
+    /// `run_ticket` answers for the current board.
+    run_ticket_cache: std::cell::RefCell<HashMap<String, Option<usize>>>,
     /// Agent conversations read so far, by session file.
     pub conversations: HashMap<PathBuf, Conversation>,
     /// The board as last seen, to notify about what changed.
@@ -294,6 +296,7 @@ impl KuzgunApp {
             pending_session: None,
             pending_files: false,
             conversations: HashMap::new(),
+            run_ticket_cache: Default::default(),
             history_runs: Vec::new(),
             _history_task: None,
             history_loaded: false,
@@ -726,6 +729,18 @@ impl KuzgunApp {
     /// The ticket an agent run names: a path, a key (`WS-115`) or a bare
     /// number. A number shared by projects picks the open, newest ticket.
     pub fn run_ticket(&self, name: &str) -> Option<usize> {
+        // Rows of a session page ask this many times a frame: remember.
+        if let Some(hit) = self.run_ticket_cache.borrow().get(name) {
+            return *hit;
+        }
+        let hit = self.run_ticket_uncached(name);
+        self.run_ticket_cache
+            .borrow_mut()
+            .insert(name.to_string(), hit);
+        hit
+    }
+
+    fn run_ticket_uncached(&self, name: &str) -> Option<usize> {
         let tickets = &self.board.tickets;
         if name.ends_with(".md") {
             let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -859,6 +874,7 @@ impl KuzgunApp {
         if real > 0 || (!changed.is_empty() && !first) {
             self.last_change = Some((SystemTime::now(), real));
         }
+        self.run_ticket_cache.borrow_mut().clear();
         self.board = board;
         self.loading = false;
         self.apply_agents();
@@ -1792,7 +1808,7 @@ impl KuzgunApp {
 
     fn recent_row(&self, n: usize, b: &SavedBoard, cx: &mut Context<Self>) -> AnyElement {
         let (muted, fg) = (cx.theme().muted_foreground, cx.theme().foreground);
-        let accent = cx.theme().accent;
+        let accent = cx.theme().primary;
         let path = b.path.clone();
         let mut detail = store::tilde(&b.path);
         if b.tickets > 0 {
@@ -2308,7 +2324,7 @@ impl KuzgunApp {
 
     /// A downloaded update: one click installs it and relaunches.
     fn render_update_button(version: String, cx: &mut Context<Self>) -> AnyElement {
-        let accent = cx.theme().accent;
+        let accent = cx.theme().primary;
         let tip = if version.is_empty() {
             "Install the update and relaunch".to_string()
         } else {

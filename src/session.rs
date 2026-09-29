@@ -39,6 +39,8 @@ pub struct SessionView {
     pub follow: bool,
     /// The story as a virtual list; `Tail` mode follows a running agent.
     pub list: ListState,
+    /// The story items, computed once per render for all rows.
+    items: std::rc::Rc<Vec<Item>>,
     /// The story shape at the last render: rows and opened blocks.
     pub shape: (usize, usize),
     /// The list of background commands is open.
@@ -192,6 +194,7 @@ impl KuzgunApp {
                 l
             },
             shape: (0, 0),
+            items: Default::default(),
             bg_open: false,
             bg_shown: HashSet::new(),
             tab: Tab::Session,
@@ -216,7 +219,7 @@ impl KuzgunApp {
             theme.muted_foreground,
             theme.foreground,
             theme.border,
-            theme.accent,
+            theme.primary,
         );
         let now = now_unix();
         let runs = self.runs_of(ix);
@@ -468,7 +471,7 @@ impl KuzgunApp {
             theme.muted_foreground,
             theme.foreground,
             theme.border,
-            theme.accent,
+            theme.primary,
         );
         let now = now_unix();
         let runs = self.runs_of(ix);
@@ -589,7 +592,7 @@ impl KuzgunApp {
             theme.muted_foreground,
             theme.foreground,
             theme.border,
-            theme.accent,
+            theme.primary,
         );
         let now = now_unix();
         let runs = self.runs_of(ix);
@@ -614,7 +617,7 @@ impl KuzgunApp {
                 .and_then(|r| self.conversations.get(&r.transcript))
                 .and_then(|c| c.md.get(i).cloned().flatten())
         };
-        let all = items(entries);
+        let all = s.items.clone();
         let last_work = all.iter().rposition(|it| matches!(it, Item::Work(..)));
         let mut story: Vec<AnyElement> = Vec::new();
         if let Some(item) = all.get(n - 1) {
@@ -1144,7 +1147,8 @@ impl KuzgunApp {
             });
 
         // ---- the story: a virtual list, so a scroll draws only what shows ----
-        let rows = 1 + items(entries).len() + 1;
+        let story_items = std::rc::Rc::new(items(entries));
+        let rows = 1 + story_items.len() + 1;
         let view = cx.entity().downgrade();
         let conv = run
             .as_ref()
@@ -1402,6 +1406,7 @@ impl KuzgunApp {
         });
         if let Some(s) = self.session.as_mut() {
             s.shape = (rows, s.open.len());
+            s.items = story_items;
         }
         if self.session.as_ref().is_some_and(|s| s.tab == Tab::Files) {
             let files = self.render_files(window, cx);

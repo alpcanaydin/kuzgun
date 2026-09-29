@@ -1,9 +1,26 @@
+<div align="center">
+
+<img src="assets/icon/kuzgun-1024.png" width="128" alt="Kuzgun icon">
+
 # Kuzgun
+
+**A raven's-eye view of your agents' work.**
+
+A native macOS kanban board for [mattpocock/skills](https://github.com/mattpocock/skills)
+tickets. It's written in Rust on [GPUI](https://github.com/zed-industries/zed), the
+GPU-accelerated UI framework behind the Zed editor.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
+![Rust](https://img.shields.io/badge/rust-2024_edition-orange)
+
+<img src="docs/screenshots/session.png" alt="Kuzgun: an agent session with its steps and changed files" width="100%">
+
+</div>
 
 A native macOS kanban board for [mattpocock/skills](https://github.com/mattpocock/skills)
 tickets. Kuzgun reads the local issue tracker the skills write under
-`.scratch/` (`/to-tickets`, `/triage`, `/wayfinder`), and follows the files live. It is built in Rust
-with GPUI (through gpui-kit) and shares its look with Tusk.
+`.scratch/` (`/to-tickets`, `/triage`, `/wayfinder`), and follows the files live. It shares its look with [Tusk](https://github.com/alpcanaydin/tusk).
 
 Kuzgun only reads. The ticket files belong to the agents and skills that
 write them (`/to-tickets`, `/triage`, `/wayfinder`, `/implement`). To act
@@ -150,3 +167,14 @@ mise exec -- shellcheck --severity=warning scripts/*.sh .github/scripts/*.sh
 
 Settings, saved boards and view state live in
 `~/Library/Application Support/kuzgun/`. Kuzgun never writes to a board.
+
+## Built with
+
+[GPUI](https://github.com/zed-industries/zed) and [gpui-component](https://github.com/longbridge/gpui-component)
+for the UI, [Sparkle](https://sparkle-project.org) for updates, and tree-sitter for
+highlighting. Kuzgun vendors small patches to `gpui-component` and `gpui-base` in
+`vendor/`, and those keep their Apache-2.0 licenses.
+
+## License
+
+[MIT](LICENSE)

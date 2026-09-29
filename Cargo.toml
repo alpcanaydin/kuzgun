@@ -3,6 +3,8 @@ name = "kuzgun"
 version = "0.1.0"
 description = "A native macOS kanban board for mattpocock/skills tickets"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/alpcanaydin/kuzgun"
 
 [dependencies]
 gpui-kit = { version = "0.6", features = ["tree-sitter-languages"] }
@@ -29,7 +31,7 @@ gpui-base = { path = "vendor/gpui-base" }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSError", "NSProcessInfo", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSProcessInfo", "NSString"] }
 
 [profile.dev]
 opt-level = 1

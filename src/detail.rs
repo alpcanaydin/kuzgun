@@ -1100,7 +1100,7 @@ impl KuzgunApp {
         if let Some(m) = self.idx.modes.get(ix).copied().flatten() {
             let (i, c, what) = match m {
                 Mode::Afk => (IconName::Bot, theme.blue, "AFK · agent alone"),
-                Mode::Hitl => (IconName::User, theme.accent, "HITL · needs a person"),
+                Mode::Hitl => (IconName::User, theme.primary, "HITL · needs a person"),
             };
             props = props.child(row(
                 Icon::new(i).size(px(15.)).text_color(c).into_any_element(),
@@ -1310,9 +1310,9 @@ impl KuzgunApp {
                 div()
                     .p_3()
                     .rounded(px(10.))
-                    .bg(theme.accent.opacity(0.1))
+                    .bg(theme.primary.opacity(0.1))
                     .border_1()
-                    .border_color(theme.accent.opacity(0.3))
+                    .border_color(theme.primary.opacity(0.3))
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -1324,7 +1324,7 @@ impl KuzgunApp {
                             .child(
                                 Icon::new(IconName::Hand)
                                     .size(px(16.))
-                                    .text_color(theme.accent),
+                                    .text_color(theme.primary),
                             )
                             .child(
                                 div()
@@ -1951,7 +1951,7 @@ impl KuzgunApp {
                 let color = if closed == n {
                     icons::status_color(Category::Done, light)
                 } else {
-                    theme.accent
+                    theme.primary
                 };
                 col = col.child(
                     div()
@@ -2358,7 +2358,7 @@ fn avatar(name: &str) -> impl IntoElement + use<> {
 }
 
 fn check_row(item: &CheckItem, t: &Theme, style: &TextViewStyle) -> AnyElement {
-    let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.accent);
+    let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.primary);
     let done = item.done;
     // One line of text is 22px tall; the box sits in the middle of the
     // first line whatever the item's length.
@@ -2450,7 +2450,7 @@ fn progress(done: usize, total: usize, t: &Theme, light: bool) -> impl IntoEleme
     let c = if total > 0 && done == total {
         icons::status_color(Category::Done, light)
     } else {
-        t.accent
+        t.primary
     };
     div()
         .flex()

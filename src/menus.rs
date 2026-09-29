@@ -10,6 +10,7 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &HideApp, cx| cx.hide());
     cx.on_action(|_: &OpenSettings, cx| crate::settings::SettingsWindow::open(cx));
+    cx.on_action(|_: &ShowAbout, _| crate::dock::show_about());
     cx.on_action(|_: &CheckForUpdates, _| crate::updater::check_for_updates());
     cx.on_action(|_: &RestartToUpdate, _| crate::updater::restart_to_update());
     refresh(cx);
@@ -24,7 +25,11 @@ pub fn refresh(cx: &mut App) {
     } else {
         None
     };
-    let mut app_menu = vec![MenuItem::action("Settings…", OpenSettings)];
+    let mut app_menu = vec![
+        MenuItem::action("About Kuzgun", ShowAbout),
+        MenuItem::separator(),
+        MenuItem::action("Settings…", OpenSettings),
+    ];
     app_menu.extend(update);
     app_menu.push(MenuItem::action("Command Palette…", TogglePalette));
     cx.set_menus([

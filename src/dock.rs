@@ -53,3 +53,38 @@ pub fn keep_live() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn keep_live() {}
+
+/// The standard macOS About panel. Icon and version are passed in, so the
+/// bare dev binary shows them too (it has no bundle Info.plist to read).
+#[cfg(target_os = "macos")]
+pub fn show_about() {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::{AnyThread as _, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::{NSData, NSDictionary, NSString};
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let version = NSString::from_str(env!("CARGO_PKG_VERSION"));
+    let data = NSData::with_bytes(include_bytes!("../assets/icon/kuzgun-1024.png"));
+    let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    let keys = [
+        NSString::from_str("ApplicationVersion"),
+        NSString::from_str("Version"),
+        NSString::from_str("ApplicationIcon"),
+    ];
+    let values: [Retained<AnyObject>; 3] =
+        [version.into(), NSString::from_str("").into(), icon.into()];
+    let key_refs: [&NSString; 3] = [&keys[0], &keys[1], &keys[2]];
+    let options = NSDictionary::from_retained_objects(&key_refs, &values);
+    let app = NSApplication::sharedApplication(mtm);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    unsafe { app.orderFrontStandardAboutPanelWithOptions(&options) };
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_about() {}

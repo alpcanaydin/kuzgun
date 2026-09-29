@@ -170,7 +170,7 @@ impl KuzgunApp {
         } else {
             muted.opacity(0.35)
         };
-        let hot_color = t.accent;
+        let hot_color = t.primary;
         let edges_layer = canvas(
             move |_, _, _| edges,
             move |bounds, edges, window, _| {
@@ -241,7 +241,7 @@ impl KuzgunApp {
                         .rounded(px(8.))
                         .border_1()
                         .border_color(if sel {
-                            t.accent
+                            t.primary
                         } else if frontier {
                             t.green.opacity(0.7)
                         } else {
@@ -280,7 +280,7 @@ impl KuzgunApp {
                                     d.child(
                                         Icon::new(IconName::Hand)
                                             .size(px(12. * z))
-                                            .text_color(t.accent),
+                                            .text_color(t.primary),
                                     )
                                 }),
                         )
@@ -324,7 +324,7 @@ impl KuzgunApp {
                 .filter_map(|&i| {
                     let &(x, y) = pos.get(&i)?;
                     let c = if selected == Some(i) {
-                        t.accent
+                        t.primary
                     } else if !lit(i) {
                         muted.opacity(0.15)
                     } else if self.idx.frontier.get(i).copied().unwrap_or(false) {
@@ -337,7 +337,7 @@ impl KuzgunApp {
                 .collect();
             let (nw, nh) = ((node_w * scale).max(2.), (node_h * scale).max(1.5));
             let handle = self.deps_scroll.clone();
-            let accent = t.accent;
+            let accent = t.primary;
             let jump = move |this: &mut KuzgunApp, p: Point<Pixels>| {
                 let b = this.deps_scroll.bounds();
                 let origin = point(

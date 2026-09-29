@@ -321,7 +321,7 @@ impl KuzgunApp {
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = cx.theme();
-        let (muted, fg, border, accent) = (t.muted_foreground, t.foreground, t.border, t.accent);
+        let (muted, fg, border, accent) = (t.muted_foreground, t.foreground, t.border, t.primary);
         let light = crate::settings::is_light(cx);
         let row = |id: ElementId, active: bool| {
             div()
@@ -727,7 +727,7 @@ impl KuzgunApp {
 
     fn render_toolbar(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = cx.theme();
-        let (muted, fg, border, accent) = (t.muted_foreground, t.foreground, t.border, t.accent);
+        let (muted, fg, border, accent) = (t.muted_foreground, t.foreground, t.border, t.primary);
         let prefs = crate::settings::get();
         let mut chips: Vec<Chip> = Vec::new();
         if self.quick != Quick::All {
@@ -1231,7 +1231,7 @@ impl KuzgunApp {
             return None;
         }
         let t = cx.theme();
-        let (muted, border, accent) = (t.muted_foreground, t.border, t.accent);
+        let (muted, border, accent) = (t.muted_foreground, t.border, t.primary);
         Some(
             div()
                 .flex()
@@ -2050,7 +2050,7 @@ impl KuzgunApp {
             theme.muted_foreground,
             theme.foreground,
             theme.border,
-            theme.accent,
+            theme.primary,
         );
         let light = crate::settings::is_light(cx);
         let selected = self.selected.as_ref() == Some(&t.path);
@@ -2232,7 +2232,7 @@ impl KuzgunApp {
             theme.muted_foreground,
             theme.foreground,
             theme.border,
-            theme.accent,
+            theme.primary,
             theme.red,
             theme.yellow,
         );

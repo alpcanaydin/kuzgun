@@ -50,6 +50,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>Kuzgun</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Alpcan Aydın. Free and open source (MIT).</string>
 ${updates}
 </dict></plist>
 PLIST

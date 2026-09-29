@@ -11,6 +11,7 @@ gpui_kit::actions!(
     [
         TogglePalette,
         CheckForUpdates,
+        ShowAbout,
         RestartToUpdate,
         QuickOpenTicket,
         OpenFolder,

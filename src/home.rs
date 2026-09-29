@@ -128,7 +128,7 @@ impl KuzgunApp {
                     ))
                     .child(stat(
                         IconName::Hand,
-                        t.accent,
+                        t.primary,
                         format!("{} need you", needs.len()),
                     ))
                     .child(stat(
@@ -346,7 +346,7 @@ impl KuzgunApp {
     ) -> AnyElement {
         let tk = &self.board.tickets[i];
         let t = cx.theme();
-        let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.accent);
+        let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.primary);
         let light = crate::settings::is_light(cx);
         let project = &self.board.projects[tk.project];
         let (done, total) = tk.checklist_counts();
@@ -470,7 +470,7 @@ impl KuzgunApp {
 
     fn home_project(&self, p: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme();
-        let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.accent);
+        let (muted, fg, accent) = (t.muted_foreground, t.foreground, t.primary);
         let light = crate::settings::is_light(cx);
         let proj = &self.board.projects[p];
         let ids: Vec<usize> = (0..self.board.tickets.len())

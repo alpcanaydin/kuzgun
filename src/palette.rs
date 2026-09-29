@@ -306,6 +306,7 @@ fn command_rows(app: &KuzgunApp) -> (Vec<CommandItem>, Vec<RunFn>) {
             Box::new(CheckForUpdates),
         );
     }
+    action("app: about kuzgun", IconName::Info, Box::new(ShowAbout));
     action("app: hide", IconName::EyeOff, Box::new(HideApp));
     action("app: quit", IconName::Power, Box::new(Quit));
     (items, runs)

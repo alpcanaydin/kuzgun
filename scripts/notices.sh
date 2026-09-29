@@ -10,7 +10,7 @@ sparkle=$(sed -n 's/^version="\(.*\)"/\1/p' scripts/fetch-sparkle.sh)
 cat <<NOTICES
 # Third-party notices
 
-The Kuzgun app bundle ships the software and assets below, each under its
+Kuzgun is MIT-licensed (see LICENSE). The app bundle also ships the software and assets below, each under its
 own license.
 
 ## Frameworks, fonts and images
