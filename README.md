@@ -14,7 +14,7 @@ GPU-accelerated UI framework behind the Zed editor.
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Rust](https://img.shields.io/badge/rust-2024_edition-orange)
 
-<img src="docs/screenshots/session.png" alt="Kuzgun: an agent session with its steps and changed files" width="100%">
+<img src="docs/screenshots/board.png" alt="Kuzgun: a board of mattpocock/skills tickets" width="100%">
 
 </div>
 
@@ -27,6 +27,8 @@ write them (`/to-tickets`, `/triage`, `/wayfinder`, `/implement`). To act
 on a ticket, copy its slash command or open it in your editor.
 
 ## What it shows
+
+<img src="docs/screenshots/session.png" alt="An agent session: the prompt, the work blocks and the changed files" width="100%">
 
 - **Welcome screen**: open a folder (`cmd-o`), or drop one on the window.
   Opened folders are saved; `cmd-1…5` reopens them. Right-click a saved
