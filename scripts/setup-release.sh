@@ -137,7 +137,12 @@ if ! skip_if_set SPARKLE_PRIVATE_KEY; then
   fi
   ok "keychain key matches assets/sparkle-public-key"
   tmp="$(mktemp -d)/key"
-  "$sparkle/bin/generate_keys" --account kuzgun -x "$tmp" >/dev/null
+  echo "Exporting the private key. If macOS asks for keychain access, choose Always Allow."
+  if ! out=$("$sparkle/bin/generate_keys" --account kuzgun -x "$tmp" 2>&1) || [ ! -s "$tmp" ]; then
+    rm -f "$tmp"
+    printf '%s\n' "$out" >&2
+    fail "Couldn't export the Sparkle key. Allow keychain access and run the wizard again; finished steps are kept."
+  fi
   set_secret SPARKLE_PRIVATE_KEY "$(cat "$tmp")"
   rm -P "$tmp"
   warn "Back up the private key in 1Password (Keychain Access → \"https://sparkle-project.org\" → kuzgun)."
