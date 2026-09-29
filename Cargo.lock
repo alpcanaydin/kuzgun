@@ -3649,6 +3649,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "log",
+ "md5",
  "notify",
  "notify-rust",
  "objc2 0.6.4",
@@ -3975,6 +3976,12 @@ dependencies = [
  "cfg-if",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "md5"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "memchr"

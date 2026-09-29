@@ -238,6 +238,8 @@ pub struct Transcript {
     pub background: Vec<Background>,
     /// Whether the last turn is still open, for harnesses that say so.
     pub open_turn: Option<bool>,
+    /// A Cursor session that ends its turns (newer files do).
+    pub(crate) cursor_turns: bool,
     /// The session's size and change time at the last read, for sources
     /// that are read whole (a JSON document, a database).
     pub(crate) stamp: (u64, i64),
@@ -702,12 +704,18 @@ pub(crate) fn summarize(input: &Value) -> String {
         "command",
         "cmd",
         "file_path",
+        "filePath",
         "path",
+        "target_file",
         "pattern",
+        "glob_pattern",
+        "filePattern",
         "query",
+        "search_term",
         "url",
         "prompt",
         "skill",
+        "goal",
     ] {
         match &input[key] {
             Value::String(s) if !s.trim().is_empty() => return one_line(s),

@@ -107,7 +107,7 @@ fn main() {
         );
         return;
     }
-    // `kuzgun --conversation claude|codex <file>`: print a transcript summary.
+    // `kuzgun --conversation <harness> <file>`: print a transcript summary.
     if args.get(1).map(String::as_str) == Some("--conversation") {
         let name = args.get(2).map(|s| s.to_lowercase()).unwrap_or_default();
         let provider = transcript::Provider::ALL
@@ -136,6 +136,43 @@ fn main() {
             .take(4)
         {
             println!("  tool {} · {}", e.tool.clone().unwrap_or_default(), e.text);
+        }
+        println!(
+            "  edits {} · open turn {:?} · first prompt {:?}",
+            t.entries.iter().map(|e| e.edits.len()).sum::<usize>(),
+            t.open_turn,
+            t.entries
+                .iter()
+                .find(|e| e.kind == transcript::Kind::User)
+                .map(|e| e.text.chars().take(60).collect::<String>())
+        );
+        return;
+    }
+    // `kuzgun --harnesses <repo> [days]`: list the sessions of other harnesses.
+    if args.get(1).map(String::as_str) == Some("--harnesses") {
+        let repo = std::path::Path::new(args.get(2).map(String::as_str).unwrap_or("."));
+        let days: i64 = args.get(3).and_then(|d| d.parse().ok()).unwrap_or(30);
+        for f in harness::discover(repo, days * 86_400) {
+            println!(
+                "{} · {} · {}",
+                f.provider.label(),
+                f.cwd.display(),
+                f.key.display()
+            );
+        }
+        for r in agents::scan(repo).iter().filter(|r| {
+            !matches!(
+                r.provider,
+                transcript::Provider::Claude | transcript::Provider::Codex
+            )
+        }) {
+            println!(
+                "run {} · {} · {:?} · {}",
+                r.provider.label(),
+                r.ticket_rel,
+                r.state,
+                r.description
+            );
         }
         return;
     }
