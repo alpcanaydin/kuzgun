@@ -114,6 +114,10 @@ pub type ListCache = HashMap<String, (ListState, std::rc::Rc<Vec<usize>>)>;
 pub struct Conversation {
     pub transcript: crate::transcript::Transcript,
     pub md: Vec<Option<Entity<TextViewState>>>,
+    /// The text each markdown view shows, to see an entry change.
+    md_text: Vec<String>,
+    /// Counts entries that changed in place, so the story measures again.
+    pub revision: u64,
     /// The last lines each running background command wrote, by its id.
     pub tails: HashMap<String, String>,
 }
@@ -712,14 +716,32 @@ impl KuzgunApp {
             }
             if c.transcript.update(&run.transcript, run.provider) {
                 changed = true;
-                for i in c.md.len()..c.transcript.entries.len() {
-                    let e = &c.transcript.entries[i];
+                // Some harnesses rewrite an entry, or read a session again whole.
+                let n = c.transcript.entries.len();
+                c.md.truncate(n);
+                c.md_text.truncate(n);
+                let mut rewritten = false;
+                for (i, e) in c.transcript.entries.iter().enumerate() {
+                    let kept = c.md_text.get(i).is_some_and(|t| *t == e.text);
+                    if kept && i < c.md.len() {
+                        continue;
+                    }
                     let md = matches!(
                         e.kind,
                         crate::transcript::Kind::User | crate::transcript::Kind::Assistant
                     )
                     .then(|| cx.new(|cx| TextViewState::markdown(&e.text, cx)));
-                    c.md.push(md);
+                    if i < c.md.len() {
+                        c.md[i] = md;
+                        c.md_text[i] = e.text.clone();
+                        rewritten = true;
+                    } else {
+                        c.md.push(md);
+                        c.md_text.push(e.text.clone());
+                    }
+                }
+                if rewritten {
+                    c.revision += 1;
                 }
             }
         }

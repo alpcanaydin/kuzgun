@@ -16,26 +16,59 @@ const CANCELED: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1
 
 pub const LOGO: &[u8] = include_bytes!("../assets/icon/kuzgun-256.png");
 
-static CLAUDE_CODE: std::sync::LazyLock<std::sync::Arc<Image>> = std::sync::LazyLock::new(|| {
-    std::sync::Arc::new(Image::from_bytes(
-        ImageFormat::Svg,
-        include_bytes!("../assets/icon/harness/claudecode-color.svg").to_vec(),
-    ))
-});
-static CODEX: std::sync::LazyLock<std::sync::Arc<Image>> = std::sync::LazyLock::new(|| {
-    std::sync::Arc::new(Image::from_bytes(
-        ImageFormat::Svg,
-        include_bytes!("../assets/icon/harness/codex-color.svg").to_vec(),
-    ))
-});
-
-/// The logo of the agent harness that ran a session, in its own colors.
-pub fn harness_logo(p: crate::transcript::Provider, size: f32) -> Img {
-    let image = match p {
-        crate::transcript::Provider::Claude => CLAUDE_CODE.clone(),
-        crate::transcript::Provider::Codex => CODEX.clone(),
+macro_rules! logo {
+    ($name:literal) => {
+        include_bytes!(concat!("../assets/icon/harness/", $name, ".svg"))
     };
-    img(image).size(px(size)).flex_none()
+}
+
+/// A harness logo: `Some(true)` draws its own colors, `Some(false)` is a
+/// one-color mark drawn in the text color.
+fn logo_of(p: crate::transcript::Provider) -> (&'static [u8], bool) {
+    use crate::transcript::Provider::*;
+    match p {
+        Claude => (logo!("claudecode-color"), true),
+        Codex => (logo!("codex-color"), true),
+        Cursor => (logo!("cursor"), false),
+        Gemini => (logo!("gemini-color"), true),
+        OpenCode => (logo!("opencode"), false),
+        Kimi => (logo!("kimi-color"), true),
+        Copilot => (logo!("githubcopilot"), false),
+        Junie => (logo!("junie-color"), true),
+        Hermes => (logo!("nousresearch"), false),
+        Pi => (logo!("pi"), false),
+        Amp => (logo!("amp"), false),
+        Grok => (logo!("grok"), false),
+    }
+}
+
+static LOGOS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<crate::transcript::Provider, std::sync::Arc<Image>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// The logo of the agent harness that ran a session.
+pub fn harness_logo(p: crate::transcript::Provider, size: f32) -> AnyElement {
+    let (bytes, colored) = logo_of(p);
+    if !colored {
+        return Icon::default()
+            .data(bytes)
+            .size(px(size))
+            .flex_none()
+            .into_any_element();
+    }
+    let image = LOGOS
+        .lock()
+        .map(|mut m| {
+            m.entry(p)
+                .or_insert_with(|| {
+                    std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, bytes.to_vec()))
+                })
+                .clone()
+        })
+        .unwrap_or_else(|_| {
+            std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, bytes.to_vec()))
+        });
+    img(image).size(px(size)).flex_none().into_any_element()
 }
 
 pub fn status_icon(c: Category) -> Icon {

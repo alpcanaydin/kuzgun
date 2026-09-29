@@ -220,7 +220,7 @@ impl KuzgunApp {
                                     div()
                                         .text_sm()
                                         .text_color(muted)
-                                        .child("Claude Code and Codex runs on this board's tickets in the last three days, read from their session files."),
+                                        .child("Agent runs on this board's tickets in the last three days, read from each harness's session files."),
                                 ),
                         )
                         .child(

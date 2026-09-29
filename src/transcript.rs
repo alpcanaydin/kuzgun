@@ -13,17 +13,71 @@ use std::path::Path;
 
 use serde_json::Value;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Provider {
     Claude,
     Codex,
+    Cursor,
+    Gemini,
+    OpenCode,
+    Kimi,
+    Copilot,
+    Junie,
+    Hermes,
+    Pi,
+    Amp,
+    Grok,
+}
+
+/// How a harness stores one session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Storage {
+    /// One JSON value per line, appended as the session goes.
+    Jsonl,
+    /// One JSON document, rewritten as the session goes.
+    Document,
+    /// Rows in a SQLite database; the session key is `<db>#<session id>`.
+    Sqlite,
 }
 
 impl Provider {
+    pub const ALL: [Provider; 12] = [
+        Provider::Claude,
+        Provider::Codex,
+        Provider::Cursor,
+        Provider::Gemini,
+        Provider::OpenCode,
+        Provider::Kimi,
+        Provider::Copilot,
+        Provider::Junie,
+        Provider::Hermes,
+        Provider::Pi,
+        Provider::Amp,
+        Provider::Grok,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Provider::Claude => "Claude Code",
             Provider::Codex => "Codex",
+            Provider::Cursor => "Cursor",
+            Provider::Gemini => "Gemini CLI",
+            Provider::OpenCode => "OpenCode",
+            Provider::Kimi => "Kimi Code",
+            Provider::Copilot => "Copilot CLI",
+            Provider::Junie => "Junie",
+            Provider::Hermes => "Hermes",
+            Provider::Pi => "Pi",
+            Provider::Amp => "Amp",
+            Provider::Grok => "Grok CLI",
+        }
+    }
+
+    pub fn storage(self) -> Storage {
+        match self {
+            Provider::Gemini | Provider::Amp => Storage::Document,
+            Provider::OpenCode | Provider::Hermes => Storage::Sqlite,
+            _ => Storage::Jsonl,
         }
     }
 }
@@ -96,7 +150,7 @@ impl Edit {
 }
 
 /// The edits of a Claude Code tool call.
-fn claude_edits(name: &str, input: &Value) -> Vec<Edit> {
+pub(crate) fn claude_edits(name: &str, input: &Value) -> Vec<Edit> {
     let path = input["file_path"].as_str().unwrap_or_default();
     if path.is_empty() {
         return Vec::new();
@@ -130,7 +184,7 @@ fn claude_edits(name: &str, input: &Value) -> Vec<Edit> {
 
 /// The edits of a Codex `apply_patch` text:
 /// `*** Update File: path` sections with `+` and `-` lines.
-fn patch_edits(patch: &str) -> Vec<Edit> {
+pub(crate) fn patch_edits(patch: &str) -> Vec<Edit> {
     let mut out: Vec<Edit> = Vec::new();
     for line in patch.lines() {
         let head = [
@@ -182,6 +236,13 @@ pub struct Transcript {
     last_message: Option<String>,
     /// Shell commands the agent left running in the background.
     pub background: Vec<Background>,
+    /// Whether the last turn is still open, for harnesses that say so.
+    pub open_turn: Option<bool>,
+    /// A Cursor session that ends its turns (newer files do).
+    pub(crate) cursor_turns: bool,
+    /// The session's size and change time at the last read, for sources
+    /// that are read whole (a JSON document, a database).
+    pub(crate) stamp: (u64, i64),
 }
 
 /// A shell command the agent started in the background and listens to.
@@ -203,6 +264,14 @@ impl Transcript {
     /// Reads the lines added since the last call. Returns whether new
     /// entries came in.
     pub fn update(&mut self, path: &Path, provider: Provider) -> bool {
+        match provider.storage() {
+            Storage::Jsonl => self.update_lines(path, provider),
+            Storage::Document => crate::harness::update_document(self, path, provider),
+            Storage::Sqlite => crate::harness::update_sqlite(self, path, provider),
+        }
+    }
+
+    fn update_lines(&mut self, path: &Path, provider: Provider) -> bool {
         use std::io::{Read, Seek, SeekFrom};
         let Ok(len) = std::fs::metadata(path).map(|m| m.len()) else {
             return false;
@@ -233,6 +302,7 @@ impl Transcript {
             match provider {
                 Provider::Claude => self.claude_line(&v),
                 Provider::Codex => self.codex_line(&v),
+                other => crate::harness::line(self, other, &v),
             }
         }
         self.offset += end as u64;
@@ -240,7 +310,7 @@ impl Transcript {
         end > 0
     }
 
-    fn push(&mut self, kind: Kind, text: String, at: i64) {
+    pub(crate) fn push(&mut self, kind: Kind, text: String, at: i64) {
         let text = text.trim();
         if !text.is_empty() {
             self.entries.push(Entry {
@@ -255,7 +325,7 @@ impl Transcript {
         }
     }
 
-    fn push_tool(&mut self, name: &str, summary: String, call: Option<String>, at: i64) {
+    pub(crate) fn push_tool(&mut self, name: &str, summary: String, call: Option<String>, at: i64) {
         self.entries.push(Entry {
             kind: Kind::Tool,
             text: summary,
@@ -267,7 +337,7 @@ impl Transcript {
         });
     }
 
-    fn attach_output(&mut self, call: &str, output: String) {
+    pub(crate) fn attach_output(&mut self, call: &str, output: String) {
         if let Some(e) = self
             .entries
             .iter_mut()
@@ -576,7 +646,7 @@ fn strip_tags(s: &str) -> String {
         .join("\n")
 }
 
-fn time_of(v: &Value) -> i64 {
+pub(crate) fn time_of(v: &Value) -> i64 {
     v["timestamp"]
         .as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -614,7 +684,7 @@ fn clean_prompt(s: &str) -> Option<String> {
 }
 
 /// Text of a tool result: a string, or the text parts of a list.
-fn flatten(v: &Value) -> String {
+pub(crate) fn flatten(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Array(parts) => parts
@@ -628,18 +698,24 @@ fn flatten(v: &Value) -> String {
 }
 
 /// One line that says what a tool call does.
-fn summarize(input: &Value) -> String {
+pub(crate) fn summarize(input: &Value) -> String {
     for key in [
         "description",
         "command",
         "cmd",
         "file_path",
+        "filePath",
         "path",
+        "target_file",
         "pattern",
+        "glob_pattern",
+        "filePattern",
         "query",
+        "search_term",
         "url",
         "prompt",
         "skill",
+        "goal",
     ] {
         match &input[key] {
             Value::String(s) if !s.trim().is_empty() => return one_line(s),
@@ -661,12 +737,12 @@ fn summarize(input: &Value) -> String {
     }
 }
 
-fn one_line(s: &str) -> String {
+pub(crate) fn one_line(s: &str) -> String {
     let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
     cut(&s, 160)
 }
 
-fn cut(s: &str, max: usize) -> String {
+pub(crate) fn cut(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }

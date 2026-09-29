@@ -54,6 +54,12 @@ on a ticket, copy its slash command or open it in your editor.
   rendered body, comments (AI triage comments are marked), and an activity
   feed from git: who moved the status, when, and which sub-tasks they
   checked. File, size, created, time in status, branch and git state.
+- **Agents**: the runs of your coding agents on the board's tickets, read
+  from each harness's own session files: Claude Code, Codex, Cursor,
+  Gemini CLI, OpenCode, Kimi, GitHub Copilot CLI, Junie, Hermes, Pi, Amp
+  and Grok CLI. A run maps to the ticket its prompt names. The session
+  page shows the prompts, the replies, every step and the changed files,
+  live while the agent works, and copies the command that resumes it.
 - **Live**: a file watcher reloads the board as files change. Changed cards
   glow for a moment, and the status bar says what changed and when.
 - **Search** (`cmd-f`, `/`): key, title, status, fields and body.
@@ -124,7 +130,8 @@ scripts/bundle.sh                                # → target/release/bundle/Kuz
 ```
 
 `kuzgun --inspect <folder>` prints what Kuzgun reads from a tracker, and
-`kuzgun --conversation claude|codex <file>` sums up an agent transcript.
+`kuzgun --conversation <harness> <file>` sums up an agent transcript, and
+`kuzgun --harnesses <repo> [days]` lists the sessions Kuzgun finds for a repo.
 
 ### Releasing (maintainers)
 

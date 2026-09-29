@@ -41,8 +41,9 @@ pub struct SessionView {
     pub list: ListState,
     /// The story items, computed once per render for all rows.
     items: std::rc::Rc<Vec<Item>>,
-    /// The story shape at the last render: rows and opened blocks.
-    pub shape: (usize, usize),
+    /// The story shape at the last render: rows, opened blocks and the
+    /// revision of the conversation.
+    pub shape: (usize, usize, u64),
     /// The list of background commands is open.
     pub bg_open: bool,
     /// Background commands whose output is open, by id.
@@ -95,23 +96,59 @@ fn step(e: &Entry) -> (IconName, &'static str, String) {
             .filter(|_| target.contains('/'))
             .unwrap_or_else(|| target.clone())
     };
-    let lower = name.to_lowercase();
+    // Harnesses name the same tools differently: compare without case,
+    // `_` or `-` (`read_file`, `ReadFile`, `read-file`).
+    let lower: String = name
+        .to_lowercase()
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect();
     match lower.as_str() {
-        "read" | "notebookread" | "view" => (IconName::FileText, "Read", file()),
+        "read" | "readfile" | "notebookread" | "view" | "viewfiles" | "readfilev2"
+        | "hashlineread" => (IconName::FileText, "Read", file()),
         "edit"
         | "multiedit"
         | "write"
+        | "writefile"
         | "notebookedit"
-        | "apply_patch"
-        | "str_replace_based_edit_tool" => (IconName::FilePen, "Edited", file()),
-        "bash" | "shell" | "exec" | "exec_command" | "local_shell" | "bashoutput" => {
-            (IconName::Terminal, "Ran", target)
+        | "applypatch"
+        | "patch"
+        | "strreplace"
+        | "strreplacefile"
+        | "strreplacebasededittool"
+        | "strreplaceeditor"
+        | "replace"
+        | "searchreplace"
+        | "editfile"
+        | "createfile"
+        | "create"
+        | "filechanges"
+        | "hashlineedit"
+        | "editfilev2"
+        | "deletefile" => (IconName::FilePen, "Edited", file()),
+        "bash"
+        | "shell"
+        | "exec"
+        | "execcommand"
+        | "localshell"
+        | "bashoutput"
+        | "runshellcommand"
+        | "runterminalcommand"
+        | "runterminalcommandv2"
+        | "terminal"
+        | "shellcommand"
+        | "awaitshell" => (IconName::Terminal, "Ran", target),
+        "grep" | "glob" | "ls" | "rg" | "find" | "listdir" | "searchfiles" | "globfilesearch"
+        | "ripgreprawsearch" | "semanticsearch" | "finder" => {
+            (IconName::Search, "Searched", target)
         }
-        "grep" | "glob" | "ls" => (IconName::Search, "Searched", target),
-        "websearch" | "web_search" => (IconName::Search, "Searched the web for", target),
-        "webfetch" | "web_fetch" => (IconName::Link, "Read", target),
-        "agent" | "task" => (IconName::Bot, "Started a subagent:", target),
-        "todowrite" | "update_plan" => (IconName::ListChecks, "Updated the plan", String::new()),
+        "websearch" | "xsearch" => (IconName::Search, "Searched the web for", target),
+        "webfetch" | "readwebpage" | "fetch" => (IconName::Link, "Read", target),
+        "agent" | "task" | "subagent" | "spawnsubagent" | "invokeagent" | "delegatetask"
+        | "agentswarm" => (IconName::Bot, "Started a subagent:", target),
+        "todowrite" | "updateplan" | "todo" => {
+            (IconName::ListChecks, "Updated the plan", String::new())
+        }
         "skill" => (IconName::Sparkles, "Used the skill", target),
         "notice" => (IconName::Bell, "", target),
         _ if lower.starts_with("mcp__") => {
@@ -150,6 +187,7 @@ pub fn resume_command(run: &AgentRun) -> Option<String> {
             let id = parts[parts.len().saturating_sub(5)..].join("-");
             format!("codex resume {id}")
         }
+        other => return crate::harness::resume_command(other, &run.transcript),
     })
 }
 
@@ -193,7 +231,7 @@ impl KuzgunApp {
                 }
                 l
             },
-            shape: (0, 0),
+            shape: (0, 0, 0),
             items: Default::default(),
             bg_open: false,
             bg_shown: HashSet::new(),
@@ -1149,6 +1187,10 @@ impl KuzgunApp {
         // ---- the story: a virtual list, so a scroll draws only what shows ----
         let story_items = std::rc::Rc::new(items(entries));
         let rows = 1 + story_items.len() + 1;
+        let revision = run
+            .as_ref()
+            .and_then(|r| self.conversations.get(&r.transcript))
+            .map_or(0, |c| c.revision);
         let view = cx.entity().downgrade();
         let conv = run
             .as_ref()
@@ -1396,16 +1438,16 @@ impl KuzgunApp {
 
         // New rows, or a block opened or closed: measure the rows again.
         let state = self.session.as_ref().map(|s| {
-            let shape = (rows, s.open.len());
+            let shape = (rows, s.open.len(), revision);
             if s.shape.0 != rows {
                 s.list.reset(rows);
-            } else if s.shape.1 != shape.1 {
+            } else if s.shape.1 != shape.1 || s.shape.2 != shape.2 {
                 s.list.remeasure();
             }
             s.list.clone()
         });
         if let Some(s) = self.session.as_mut() {
-            s.shape = (rows, s.open.len());
+            s.shape = (rows, s.open.len(), revision);
             s.items = story_items;
         }
         if self.session.as_ref().is_some_and(|s| s.tab == Tab::Files) {

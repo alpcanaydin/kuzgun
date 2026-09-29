@@ -13,7 +13,7 @@ Only the latest release gets security fixes. Kuzgun updates itself, so most peop
 ## How Kuzgun handles your data
 
 - **Kuzgun only reads.** It never writes to a board, a ticket, a repo or an agent's files.
-- **Agent sessions** (Claude Code, Codex) are read from their own files on your Mac. Nothing leaves it.
+- **Agent sessions** (Claude Code, Codex, Cursor, Gemini CLI, OpenCode and the others) are read from their own files and databases, read-only, on your Mac. Nothing leaves it.
 - **Settings, saved boards and view state** are stored in `~/Library/Application Support/kuzgun/`.
 - **No telemetry.** Kuzgun doesn't send data anywhere on its own.
 - **Updates** are signed with an EdDSA key, and Kuzgun verifies each one before installing it. Every release is also signed with a Developer ID and notarized by Apple.

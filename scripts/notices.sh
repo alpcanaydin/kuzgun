@@ -6,6 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 sparkle=$(sed -n 's/^version="\(.*\)"/\1/p' scripts/fetch-sparkle.sh)
+sqlite=$(grep -A1 '^name = "libsqlite3-sys"' Cargo.lock | sed -n 's/^version = "\(.*\)"/libsqlite3-sys \1/p')
 
 cat <<NOTICES
 # Third-party notices
@@ -22,7 +23,8 @@ own license.
 | Geist Mono (font) | 1 | SIL Open Font License 1.1 | https://github.com/vercel/geist-font |
 | Pravka (font) | | see the font's own terms | |
 | Blackbird, Microsoft Fluent Emoji (app icon) | | MIT | https://github.com/microsoft/fluentui-emoji |
-| Claude Code and Codex marks, LobeHub Icons | 1.95.1 | MIT (the marks belong to Anthropic and OpenAI) | https://github.com/lobehub/lobe-icons |
+| SQLite (compiled in through libsqlite3-sys) | ${sqlite} | Public domain | https://sqlite.org/copyright.html |
+| Agent harness marks, LobeHub Icons | 1.95.1 | MIT (the marks belong to their owners) | https://github.com/lobehub/lobe-icons |
 
 ## Rust crates compiled into Kuzgun
 

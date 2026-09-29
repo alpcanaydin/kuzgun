@@ -21,6 +21,8 @@ notify-rust = "4.18.1"
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNUserNotificationCenter", "UNNotificationRequest", "UNNotificationContent", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "block2"] }
 block2 = "0.6"
 similar = { version = "3.2.0", features = ["inline"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+md5 = "0.8.1"
 
 # The same local patches Tusk carries: editor-style checkbox / switch,
 # inline Markdown code at the text size, toast layout.
