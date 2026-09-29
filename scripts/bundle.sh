@@ -19,6 +19,10 @@ cp assets/icon/Kuzgun.icns "$app/Contents/Resources/Kuzgun.icns"
 # In-app updates (src/updater.rs): Sparkle.framework, loaded at runtime.
 public_key=""
 [ -s assets/sparkle-public-key ] && public_key="$(tr -d '[:space:]' < assets/sparkle-public-key)"
+if [ -n "$public_key" ] && ! [[ "$public_key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+  echo "bundle: assets/sparkle-public-key is not a Sparkle public key" >&2
+  exit 1
+fi
 if [ -n "$public_key" ]; then
   sparkle="$("$root/scripts/fetch-sparkle.sh")"
   mkdir -p "$app/Contents/Frameworks"

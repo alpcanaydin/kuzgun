@@ -122,16 +122,23 @@ fi
 step "4/6  Sparkle update-signing key"
 if ! skip_if_set SPARKLE_PRIVATE_KEY; then
   sparkle="$(scripts/fetch-sparkle.sh)"
-  current=$("$sparkle/bin/generate_keys" --account kuzgun -p 2>/dev/null || true)
+  # A public key is 44 characters of base64. generate_keys prints its
+  # errors on stdout, so an exit code of 0 is not enough.
+  valid_key() { [[ "$1" =~ ^[A-Za-z0-9+/]{43}=$ ]]; }
+  current=$("$sparkle/bin/generate_keys" --account kuzgun -p 2>/dev/null) || current=""
+  valid_key "$current" || current=""
   if [ -z "$current" ]; then
     yes "No Sparkle key named \"kuzgun\" in your keychain. Make one now?" || fail "Kuzgun needs a Sparkle key to sign its updates"
     "$sparkle/bin/generate_keys" --account kuzgun >/dev/null
-    current=$("$sparkle/bin/generate_keys" --account kuzgun -p)
+    current=$("$sparkle/bin/generate_keys" --account kuzgun -p 2>/dev/null) || current=""
+    valid_key "$current" || fail "generate_keys made no key (allow keychain access and run the wizard again)"
     ok "made the Sparkle key \"kuzgun\""
   fi
   if [ "$current" != "$PUBLIC_KEY" ]; then
-    [ -z "$PUBLIC_KEY" ] || no "assets/sparkle-public-key holds another key. Installed copies trust that one. Replace it?" \
-      || fail "Keep the key that installed copies trust"
+    # A key that installed copies trust is replaced only on an explicit yes.
+    if valid_key "$PUBLIC_KEY" && no "assets/sparkle-public-key holds another key. Installed copies trust that one. Replace it?"; then
+      fail "Kept assets/sparkle-public-key. Import its private key into your keychain as \"kuzgun\" (generate_keys -f) and run the wizard again."
+    fi
     printf '%s\n' "$current" > assets/sparkle-public-key
     warn "wrote assets/sparkle-public-key: commit it, the app bundle reads it"
   fi
