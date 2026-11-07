@@ -635,7 +635,8 @@ impl KuzgunApp {
         order
     }
 
-    /// Every ticket of the project is closed.
+    /// Every ticket of the project is closed, or it has none and its
+    /// spec says the work is over.
     pub fn project_finished(&self, p: usize) -> bool {
         let mut it = self
             .board
@@ -643,7 +644,10 @@ impl KuzgunApp {
             .iter()
             .filter(|t| t.project == p)
             .peekable();
-        it.peek().is_some() && it.all(|t| t.category.is_closed())
+        if it.peek().is_none() {
+            return self.board.projects.get(p).is_some_and(|x| x.closed);
+        }
+        it.all(|t| t.category.is_closed())
     }
 
     /// The region views, made once per window.
