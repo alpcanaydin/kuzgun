@@ -139,6 +139,8 @@ pub struct Project {
     pub docs: Vec<Doc>,
     /// A wayfinder map, when the project has `map.md`.
     pub map: Option<MapInfo>,
+    /// Its spec or map says the work is built, resolved or superseded.
+    pub closed: bool,
 }
 
 /// The parts of a wayfinder map a board shows.
@@ -395,6 +397,7 @@ impl Board {
                     key: String::new(),
                     docs: Vec::new(),
                     map: None,
+                    closed: false,
                 });
                 projects.len() - 1
             });
@@ -429,6 +432,7 @@ impl Board {
                         key: String::new(),
                         docs: Vec::new(),
                         map: None,
+                        closed: false,
                     });
                     project_ix.insert(dir.clone(), projects.len() - 1);
                     projects.len() - 1
@@ -448,6 +452,11 @@ impl Board {
                         .ok()
                         .map(|t| parse_map(&d.path, &t))
                 });
+            p.closed = p
+                .docs
+                .iter()
+                .filter(|d| doc_rank(&d.name) <= 2)
+                .any(|d| std::fs::read_to_string(&d.path).is_ok_and(|t| doc_closed(&t)));
             if let Some(d) = p.docs.first() {
                 // "PRD: Cookbooks" and "Spec: Cookbooks" name the doc, not the project.
                 let t = DOC_PREFIX.replace(d.title.trim(), "");
@@ -1137,6 +1146,53 @@ fn is_doc_name(name: &str) -> bool {
     doc_rank(name) < 9
 }
 
+/// A spec's status line says the work is over: "Status: built. PR #59…",
+/// "Status on 2026-11-03: option A is built", "Status: historical spec".
+pub fn doc_closed(text: &str) -> bool {
+    const OVER: [&str; 17] = [
+        "built",
+        "done",
+        "resolved",
+        "closed",
+        "complete",
+        "completed",
+        "shipped",
+        "merged",
+        "landed",
+        "implemented",
+        "released",
+        "historical",
+        "superseded",
+        "obsolete",
+        "canceled",
+        "cancelled",
+        "abandoned",
+    ];
+    const OPEN: [&str; 6] = [
+        "not",
+        "partially",
+        "partly",
+        "unbuilt",
+        "pending",
+        "in-progress",
+    ];
+    let fm = front_matter(text).0;
+    let status = fm
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .chain(header_props(text))
+        .find(|(k, _)| k.to_lowercase().starts_with("status"))
+        .map(|(_, v)| v);
+    let Some(v) = status else { return false };
+    // The first sentence carries the verdict; later ones are history.
+    let head = v.split(". ").next().unwrap_or("").to_lowercase();
+    let words: Vec<&str> = head
+        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    words.iter().any(|w| OVER.contains(w)) && !words.iter().any(|w| OPEN.contains(w))
+}
+
 fn doc_rank(name: &str) -> usize {
     match name.to_lowercase().as_str() {
         "spec.md" => 0,
@@ -1753,6 +1809,24 @@ mod tests {
         );
         assert!(derived.status_derived);
         assert_eq!(derived.status, "resolved");
+    }
+
+    #[test]
+    fn spec_status_closes_project() {
+        assert!(doc_closed("# A\n\nStatus: resolved\n"));
+        assert!(doc_closed("# A\n\nStatus: built. PR #59 merged it.\n"));
+        assert!(doc_closed("# A\n\n**Status:** built. `e7f` landed it.\n"));
+        assert!(doc_closed(
+            "# A\n\nStatus on 2026-11-03: option A is built and in use.\n"
+        ));
+        assert!(doc_closed(
+            "# A\n\nStatus: historical UI-phase specification.\n"
+        ));
+        assert!(doc_closed("---\nstatus: done\n---\n# A\n"));
+        assert!(!doc_closed("# A\n\nStatus: draft\n"));
+        assert!(!doc_closed("# A\n\nStatus: not built yet\n"));
+        assert!(!doc_closed("# A\n\nStatus: partially built\n"));
+        assert!(!doc_closed("# A\n\nNo status here.\n"));
     }
 
     #[test]
