@@ -1148,9 +1148,10 @@ fn is_doc_name(name: &str) -> bool {
 
 /// A spec's status line says the work is over: "Status: built. PR #59…",
 /// "Status on 2026-11-03: option A is built", "Status: historical spec".
-/// The verdict has to lead the status or follow "is", "was" or "has been",
-/// and nothing may hedge it, so "ready to be built", "in progress, almost
-/// done" and "built, in review" leave the work open.
+/// The verdict has to lead the first sentence or follow "is", "was" or
+/// "has been" there, and nothing in the whole line may hedge it, so "ready to
+/// be built", "in progress, almost done" and "built. The design pass is
+/// pending." leave the work open.
 pub fn doc_closed(text: &str) -> bool {
     const OVER: [&str; 17] = [
         "built",
@@ -1174,8 +1175,8 @@ pub fn doc_closed(text: &str) -> bool {
     // The words that may stand right before the verdict: "option A is built",
     // "it was superseded", "has been merged", "all done".
     const BEFORE: [&str; 6] = ["is", "are", "was", "were", "been", "all"];
-    // Any of these keeps the work open.
-    const OPEN: [&str; 22] = [
+    // Any of these, anywhere in the line, keeps the work open.
+    const OPEN: [&str; 26] = [
         // Not (yet): "not built", "has never been merged", "nothing is built yet".
         "not",
         "never",
@@ -1191,7 +1192,12 @@ pub fn doc_closed(text: &str) -> bool {
         "almost",
         "nearly",
         "unbuilt",
-        // Still moving: "built, in review", "done except the export step".
+        // Still to do: "built, in review", "done except the export step",
+        // "built. Open before the map closes: a design pass".
+        "open",
+        "remaining",
+        "todo",
+        "to-do",
         "pending",
         "in-progress",
         "progress",
@@ -1202,6 +1208,11 @@ pub fn doc_closed(text: &str) -> bool {
         "unless",
         "except",
     ];
+    fn words(s: &str) -> Vec<&str> {
+        s.split(|c: char| !(c.is_alphanumeric() || c == '-'))
+            .filter(|w| !w.is_empty())
+            .collect()
+    }
     let fm = front_matter(text).0;
     let status = fm
         .iter()
@@ -1210,19 +1221,19 @@ pub fn doc_closed(text: &str) -> bool {
         .find(|(k, _)| k.to_lowercase().starts_with("status"))
         .map(|(_, v)| v);
     let Some(v) = status else { return false };
-    // The first sentence carries the verdict; later ones are history.
-    let head = v.split(". ").next().unwrap_or("").to_lowercase();
     // "hasn't been merged" says "not".
-    let head = head.replace("n't", " not").replace("n’t", " not");
-    let words: Vec<&str> = head
-        .split(|c: char| !(c.is_alphanumeric() || c == '-'))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let leads = words.first().is_some_and(|w| OVER.contains(w));
-    let follows = words
+    let v = v
+        .to_lowercase()
+        .replace("n't", " not")
+        .replace("n’t", " not");
+    // The first sentence carries the verdict. The later ones are mostly
+    // history ("PR #59 merged it"), but a hedge there still counts.
+    let head = words(v.split(". ").next().unwrap_or(""));
+    let leads = head.first().is_some_and(|w| OVER.contains(w));
+    let follows = head
         .windows(2)
         .any(|p| BEFORE.contains(&p[0]) && OVER.contains(&p[1]));
-    (leads || follows) && !words.iter().any(|w| OPEN.contains(w))
+    (leads || follows) && !words(&v).iter().any(|w| OPEN.contains(w))
 }
 
 fn doc_rank(name: &str) -> usize {
@@ -1884,6 +1895,13 @@ mod tests {
         ));
         assert!(!doc_closed("# A\n\nStatus: hasn't been merged\n"));
         assert!(!doc_closed("# A\n\nStatus: nothing is built yet\n"));
+        // A hedge in a later sentence.
+        assert!(!doc_closed(
+            "# A\n\nStatus: built. The manual test and a design pass are pending.\n"
+        ));
+        assert!(!doc_closed(
+            "# A\n\nStatus: built. Open before the map closes: the manual test.\n"
+        ));
     }
 
     #[test]
